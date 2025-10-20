@@ -31,3 +31,4 @@ Thumbs.db
 data/
 Test/
 *.parquet
+run_all.py
