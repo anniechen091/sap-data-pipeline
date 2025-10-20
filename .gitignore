@@ -1,0 +1,33 @@
+# Python cache & virtual env
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+airflow_env/
+
+# Airflow local files
+logs/
+airflow.db
+unittests.cfg
+
+# SAP GUI exports & temporary files
+*.xlsx
+*.csv
+*.log
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+*.ipynb
+
+# Large data exports
+data/
+Test/
+*.parquet
