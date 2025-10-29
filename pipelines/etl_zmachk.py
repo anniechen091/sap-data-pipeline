@@ -59,6 +59,17 @@ def run_etl_zmachk(folder_path):
             "Lead Time": "Lead_Time",
             "Stock Plan Frequency": "Stock_Plan_Frequency",
             "Supplier Channel": "Supplier_Channel",
+            "Item Status": "Item_Status",
+            "Status WS E": "Status_WS_E",
+            "Status WS W": "Status_WS_W",
+            "Status SCA": "Status_SCA",
+            "Status NCA": "Status_NCA",
+            "Status TX": "Status_TX",
+            "Status EC": "Status_EC",
+            "Retail Channel": "Retail_Channel",
+            "Status Online": "Status_Online",
+            "WholeSale Channel": "WholeSale_Channel",
+            "Wacine Ordering": "Wachine_Ordering",
 
         }, inplace=True)
 
@@ -134,6 +145,17 @@ def run_etl_zmachk(folder_path):
         "Stock_Plan_Frequency": NVARCHAR(50),
         "Supplier_Channel": NVARCHAR(50),
         "Seasonal": NVARCHAR(20),
+        "Item_Status": NVARCHAR(5),
+        "Status_WS_E": NVARCHAR(5),
+        "Status_WS_W": NVARCHAR(5),
+        "Status_SCA": NVARCHAR(5),
+        "Status_NCA": NVARCHAR(5),
+        "Status_TX": NVARCHAR(5),
+        "Status_EC": NVARCHAR(5),
+        "Retail_Channel": NVARCHAR(5),
+        "Status_Online": NVARCHAR(5),
+        "WholeSale_Channel": NVARCHAR(5),
+        "Wachine_Ordering": NVARCHAR(5),
     }
 
     upsert_batch(

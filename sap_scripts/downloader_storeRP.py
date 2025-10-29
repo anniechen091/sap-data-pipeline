@@ -61,8 +61,8 @@ def run_storeRP_query(session, site_range_type, export_dir, filename):
 
         session.findById("wnd[0]/usr/radRA7").select()
 
-        session.findById("wnd[0]/usr/ctxtS_WERKS-LOW").text = "1000"
-        session.findById("wnd[0]/usr/ctxtS_WERKS-HIGH").text = "5999"
+        session.findById("wnd[0]/usr/ctxtS_WERKS-LOW").text = "1655"
+        session.findById("wnd[0]/usr/ctxtS_WERKS-HIGH").text = "1799"
         session.findById("wnd[0]/usr/ctxtS_DISMM-LOW").text = "RP"
 
         # 執行查詢
