@@ -195,6 +195,7 @@ def export_store_rp_report(engine, output_folder):
         CASE WHEN Change = 'YES' THEN [Sales_*1.25] END AS [New ReOdr],
         CASE WHEN Change = 'YES' THEN [Sales_*2] END AS [New Tgt]
     FROM Condition
+    WHERE Change = 'YES'
     ORDER BY Article, Store;
 
     """)
