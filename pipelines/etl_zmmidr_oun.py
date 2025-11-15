@@ -175,7 +175,7 @@ def Process_Dry_Zmmidr(df):
 
 if __name__ == "__main__":
 
-    # download_zmmidr_OUn(os.getenv("EXPORT_DIR_ZMMIDR_OUn"))
+    download_zmmidr_OUn(os.getenv("EXPORT_DIR_ZMMIDR_OUn"))
     run_etl_zmmidr_OUn(os.getenv("EXPORT_DIR_ZMMIDR_OUn"))
 
 

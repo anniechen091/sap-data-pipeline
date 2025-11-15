@@ -104,7 +104,7 @@ def run_etl_zstpromo(folder_path):
 
 if __name__ == "__main__":
 
-    # download_zstpromo(os.getenv("DATE_FILE_ZSTPROMO"), os.getenv("EXPORT_DIR_ZSTPROMO"))
+    download_zstpromo(os.getenv("DATE_FILE_ZSTPROMO"), os.getenv("EXPORT_DIR_ZSTPROMO"))
     run_etl_zstpromo(os.getenv("EXPORT_DIR_ZSTPROMO")) 
 
     # run_etl_zmb51(os.getenv("EXPORT_DIR_ZMB51"))

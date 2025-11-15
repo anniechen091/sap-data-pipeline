@@ -192,5 +192,5 @@ def run_etl_zmachk(folder_path):
 
 if __name__ == "__main__":
 
-    # download_zmachk(os.getenv("EXPORT_DIR_ZMACHK"))
+    download_zmachk(os.getenv("EXPORT_DIR_ZMACHK"))
     run_etl_zmachk(os.getenv("EXPORT_DIR_ZMACHK")) 

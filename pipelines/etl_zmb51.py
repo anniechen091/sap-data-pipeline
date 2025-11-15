@@ -120,7 +120,7 @@ def run_etl_zmb51(folder_path):
 
 if __name__ == "__main__":
 
-    # download_zmb51(os.getenv("DATE_FILE_ZMB51"), os.getenv("EXPORT_DIR_ZMB51"))
+    download_zmb51(os.getenv("DATE_FILE_ZMB51"), os.getenv("EXPORT_DIR_ZMB51"))
     run_etl_zmb51(os.getenv("EXPORT_DIR_ZMB51"))
 
 
