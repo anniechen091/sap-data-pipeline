@@ -5,6 +5,11 @@ import pyautogui
 import win32con
 import datetime
 import os
+import pandas as pd
+from datetime import timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # === 錯誤記錄函式 ===
 def record_done(flow_name, *keys):
@@ -79,27 +84,6 @@ def wait_for_table(session, grid_id="wnd[0]/usr/cntlGRID1/shellcont/shell",
             time.sleep(poll)
     raise TimeoutError(f"SAP 報表 {grid_id} 等待逾時 {timeout}s")
 
-# def wait_for_table(session, interval=5):
-#     """無限等待，直到結果 table 出現"""
-#     while True:
-#         try:
-#             table = session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell")
-#             if table is not None:
-#                 return
-#         except:
-#             pass
-#         time.sleep(interval)
-
-# 有 Timeout 的版本
-# def wait_for_table(session, timeout=120):
-#     for _ in range(timeout):
-#         try:
-#             if session.findById("wnd[0]/usr/cntlCONTAINER_0100/shellcont/shell").RowCount > 0:
-#                 return
-#         except:
-#             pass
-#         time.sleep(1)
-#     raise TimeoutError("查詢結果超時未出現")
 
 #  ------- 等待導出選單的方法 ------- 
 def wait_for_export_menu(session, interval=5):
@@ -191,6 +175,40 @@ def log_error(flow_name, msg, log_file=None, **kwargs):
 
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"[{now}] {key_str} | Error: {msg}\n")
+
+
+#--------------更新日期 --------------
+
+def update_sales_search_date(file_path, fill_missing=True):
+    file_path = os.getenv("DATE_FILE_ZMB51")
+    df = pd.read_excel(file_path)
+    df["Start"] = pd.to_datetime(df["Start"])
+    df["End"] = pd.to_datetime(df["End"])
+
+    added = 0
+    last_end = df["End"].max()
+    today = pd.Timestamp.today().normalize()
+
+    # 滿一週（或多週）就補
+    while today >= (last_end + timedelta(days=7)):
+        new_start = last_end + timedelta(days=1)
+        new_end = new_start + timedelta(days=6)
+        if not ((df["Start"] == new_start) & (df["End"] == new_end)).any():
+            df = pd.concat(
+                [df, pd.DataFrame([{"Start": new_start, "End": new_end}])],
+                ignore_index=True
+            )
+            added += 1
+        last_end = new_end
+
+    if added > 0:
+        df["Start"] = df["Start"].dt.strftime("%m/%d/%Y").astype(str)
+        df["End"] = df["End"].dt.strftime("%m/%d/%Y").astype(str)
+        df.to_excel(file_path, index=False)
+        print(f"Added {added} new week(s). Latest week: {df['End'].max()}")
+    else:
+        print("No new week to add - up to date.")
+
 
 
 #--------------未用到的 --------------
