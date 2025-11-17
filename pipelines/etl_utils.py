@@ -3,6 +3,7 @@ import numpy as np
 import re
 import os
 import time
+from datetime import date
 from sqlalchemy import types
 
 
@@ -58,4 +59,15 @@ def sql_type_string(col_type):
         return "DATETIME"
     else:
         raise ValueError(f"Unsupported SQL type for ALTER COLUMN: {col_type}")
+
+def get_current_acctwk():
+    today = pd.Timestamp(date.today())
+    df_cal = pd.read_excel(
+        r"C:\Users\anniec\Documents\TAWA\AutoScript\ETL_SAP\mapping_tables\maintain\Calendar.xlsx"
+    )
+    df_cal["Date"] = pd.to_datetime(df_cal["Date"])
+    acctwk = df_cal.loc[df_cal["Date"] == today, "AcctWk"].squeeze()
+    if pd.isna(acctwk):
+        raise ValueError(f"No AcctWk found for today's date: {today}")
+    return int(acctwk)
 
