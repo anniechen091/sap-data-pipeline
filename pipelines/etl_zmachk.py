@@ -164,9 +164,10 @@ def run_etl_zmachk(folder_path):
         unique_keys=["Article"],
         column_types=column_types
         )
-
+    
+    batch_df.to_csv(r"C:\Users\anniec\Documents\TAWA\AutoScript\DC Forecast - Seasonality\TawaWalong\ZMACHK_ALL.csv", index=False, encoding='utf-8-sig')
     batch_df.to_excel(r"C:\Users\anniec\Documents\TAWA\AutoScript\DC Forecast - Seasonality\TawaWalong\ZMACHK_ALL.xlsx", index=False)
-    print(f"✅  已匯入 {os.getenv('TABLE_Article_MasterData')} {len(batch_df):,} 列\n")
+    print(f"✅  已匯入 {os.getenv("TABLE_Article_MasterData")} {len(batch_df):,} 列\n")
 
     output_path = Path(folder_path) / "new_articles" / f"New_Article_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     
