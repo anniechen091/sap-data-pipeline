@@ -205,7 +205,7 @@ def update_sales_search_date(file_path, fill_missing=True):
         df["Start"] = df["Start"].dt.strftime("%m/%d/%Y").astype(str)
         df["End"] = df["End"].dt.strftime("%m/%d/%Y").astype(str)
         df.to_excel(file_path, index=False)
-        print(f"Added {added} new week(s). Latest week: {df['End'].max()}")
+        print(f"Added {added} new week(s). Latest week: {last_end.strftime('%m/%d/%Y')}")
     else:
         print("No new week to add - up to date.")
 
