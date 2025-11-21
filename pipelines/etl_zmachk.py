@@ -34,6 +34,7 @@ def run_etl_zmachk(folder_path):
         dfs.append(df)
 
     batch_df = pd.concat(dfs, ignore_index=True)
+    batch_df = batch_df.drop_duplicates(subset=['Article'])
     print("Length:", len(batch_df), " \nContent: \n", batch_df)
 
     batch_df.rename(columns={

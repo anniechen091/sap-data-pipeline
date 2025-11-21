@@ -180,7 +180,7 @@ def log_error(flow_name, msg, log_file=None, **kwargs):
 #--------------更新日期 --------------
 
 def update_sales_search_date(file_path, fill_missing=True):
-    file_path = os.getenv("DATE_FILE_ZMB51")
+    file_path = file_path
     df = pd.read_excel(file_path)
     df["Start"] = pd.to_datetime(df["Start"])
     df["End"] = pd.to_datetime(df["End"])
