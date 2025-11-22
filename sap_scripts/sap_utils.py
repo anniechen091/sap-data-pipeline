@@ -186,6 +186,7 @@ def update_sales_search_date(file_path, fill_missing=True):
     df["End"] = pd.to_datetime(df["End"])
 
     added = 0
+    last_start = df["Start"].max()
     last_end = df["End"].max()
     today = pd.Timestamp.today().normalize()
 
@@ -208,6 +209,8 @@ def update_sales_search_date(file_path, fill_missing=True):
         print(f"Added {added} new week(s). Latest week: {last_end.strftime('%m/%d/%Y')}")
     else:
         print("No new week to add - up to date.")
+        
+    return last_start, last_end
 
 
 

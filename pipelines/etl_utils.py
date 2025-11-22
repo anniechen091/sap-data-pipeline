@@ -6,6 +6,10 @@ import time
 from datetime import date
 from sqlalchemy import types
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def clean_number(val):
     if pd.isna(val):
@@ -60,14 +64,15 @@ def sql_type_string(col_type):
     else:
         raise ValueError(f"Unsupported SQL type for ALTER COLUMN: {col_type}")
 
-def get_current_acctwk():
-    today = pd.Timestamp(date.today())
-    df_cal = pd.read_excel(
-        r"C:\Users\anniec\Documents\TAWA\AutoScript\ETL_SAP\mapping_tables\maintain\Calendar.xlsx"
-    )
-    df_cal["Date"] = pd.to_datetime(df_cal["Date"])
-    acctwk = df_cal.loc[df_cal["Date"] == today, "AcctWk"].squeeze()
+def get_acctwk(target_date):
+    df_cal = pd.read_excel(r"C:\Users\anniec\Documents\TAWA\AutoScript\ETL_SAP\mapping_tables\maintain\Calendar.xlsx")
+    df_cal["Date"] = pd.to_datetime(df_cal["Date"]).dt.date
+
+    date_only = target_date.date()
+    acctwk = df_cal.loc[df_cal["Date"] == date_only, "AcctWk"].squeeze()
+
     if pd.isna(acctwk):
-        raise ValueError(f"No AcctWk found for today's date: {today}")
+        raise ValueError(f"No AcctWk found for date: {date_only}")
+
     return int(acctwk)
 
