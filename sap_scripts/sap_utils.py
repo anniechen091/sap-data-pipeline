@@ -11,23 +11,42 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# === 錯誤記錄函式 ===
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 等於 ETL_SAP/
+LOG_ROOT = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_ROOT, exist_ok=True)
+
+# === 錯誤記錄函式 - 絕對路徑===
+
 def record_done(flow_name, *keys):
-    """紀錄查詢完成項目，keys 可包含 dept, dc, date 等"""
-    os.makedirs("logs", exist_ok=True)
     done_key = "_".join(str(k) for k in keys)
-    with open(f"ETL_SAP/logs/{flow_name}_done.txt", "a") as f:
+    with open(os.path.join(LOG_ROOT, f"{flow_name}_done.txt"), "a") as f:
         f.write(done_key + "\n")
 
-
 def is_already_done(flow_name, *keys):
-    """確認是否已查詢完成"""
     done_key = "_".join(str(k) for k in keys)
-    path = f"ETL_SAP/logs/{flow_name}_done.txt"
-    if not os.path.exists(path):
+    filepath = os.path.join(LOG_ROOT, f"{flow_name}_done.txt")
+    if not os.path.exists(filepath):
         return False
-    with open(path) as f:
+    with open(filepath) as f:
         return done_key in f.read()
+
+# === 錯誤記錄函式 - 相對路徑 ===       
+# def record_done(flow_name, *keys):
+#     """紀錄查詢完成項目，keys 可包含 dept, dc, date 等"""
+#     os.makedirs("logs", exist_ok=True)
+#     done_key = "_".join(str(k) for k in keys)
+#     with open(f"ETL_SAP/logs/{flow_name}_done.txt", "a") as f:
+#         f.write(done_key + "\n")
+
+
+# def is_already_done(flow_name, *keys):
+#     """確認是否已查詢完成"""
+#     done_key = "_".join(str(k) for k in keys)
+#     path = f"ETL_SAP/logs/{flow_name}_done.txt"
+#     if not os.path.exists(path):
+#         return False
+#     with open(path) as f:
+#         return done_key in f.read()
     
     
 def select_layout(session, layout_name):
