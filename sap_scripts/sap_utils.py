@@ -210,7 +210,7 @@ def update_sales_search_date(file_path, fill_missing=True):
     today = pd.Timestamp.today().normalize()
 
     # 滿一週（或多週）就補
-    while today >= (last_end + timedelta(days=7)):
+    while today > (last_end + timedelta(days=7)):
         new_start = last_end + timedelta(days=1)
         new_end = new_start + timedelta(days=6)
         if not ((df["Start"] == new_start) & (df["End"] == new_end)).any():

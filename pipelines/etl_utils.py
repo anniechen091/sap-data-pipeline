@@ -70,6 +70,7 @@ def get_acctwk(target_date):
 
     date_only = target_date.date()
     acctwk = df_cal.loc[df_cal["Date"] == date_only, "AcctWk"].squeeze()
+    print("find acctwk:", acctwk)
 
     if pd.isna(acctwk):
         raise ValueError(f"No AcctWk found for date: {date_only}")
