@@ -158,7 +158,8 @@ def run_etl_zmachk(folder_path):
         "WholeSale_Channel": NVARCHAR(5),
         "Wachine_Ordering": NVARCHAR(5),
     }
-
+    
+    batch_df = clean_df_by_sql_schema(batch_df, "dbo.dim_Article")
     upsert_batch(
         df=batch_df,
         target_table=os.getenv("TABLE_Article_MasterData"),

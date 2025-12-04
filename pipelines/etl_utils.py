@@ -5,8 +5,12 @@ import os
 import time
 from datetime import date
 from sqlalchemy import types
+from sqlalchemy import inspect
+from ETL_SAP.common.config import get_sql_engine
 
 from dotenv import load_dotenv
+
+
 
 load_dotenv()
 
@@ -76,4 +80,65 @@ def get_acctwk(target_date):
         raise ValueError(f"No AcctWk found for date: {date_only}")
 
     return int(acctwk)
+
+
+
+def clean_df_by_sql_schema(df, table_name):
+    """
+    Automatically clean dataframe dtypes based on SQL Server schema.
+    If the table does not exist, skip cleaning.
+    """
+
+    engine = get_sql_engine()
+    insp = inspect(engine)
+
+    # Extract schema + table name (e.g., dbo.dim_Article)
+
+    parts = table_name.strip().split('.')
+    if len(parts) == 2:
+        schema, tbl = parts
+    else:
+        schema = "dbo"
+        tbl = parts[0]
+
+    # ====== Check if table exists ======
+    table_list = insp.get_table_names(schema=schema)
+
+    if tbl not in table_list:
+        print(f"⚠️ SQL table `{table_name}` does not exist — skipping dtype cleaning.")
+        return df
+
+    # ====== Read schema information ======
+    try:
+        columns_info = insp.get_columns(tbl, schema=schema)
+    except:
+        print(f"⚠️ Unable to read schema for `{table_name}` — skipping dtype cleaning.")
+        return df
+
+    # ====== Clean df dtypes according to SQL schema ======
+    for col in columns_info:
+        colname = col["name"]
+        coltype = str(col["type"]).lower()
+
+        if colname not in df.columns:
+            continue
+
+        # 1) String columns
+        if any(t in coltype for t in ["varchar", "char", "text"]):
+            df[colname] = df[colname].fillna("").astype(str).replace("nan", "")
+
+        # 2) Numeric columns
+        elif any(t in coltype for t in ["decimal", "numeric", "float", "int"]):
+            df[colname] = pd.to_numeric(df[colname], errors="coerce")
+
+        # 3) Date columns
+        elif "date" in coltype:
+            df[colname] = (
+                pd.to_datetime(df[colname], errors="coerce")
+                .dt.strftime('%Y-%m-%d')
+            )
+
+    print(f"🔧 Dtype cleaning completed based on SQL schema for `{table_name}`.")
+    return df
+
 
