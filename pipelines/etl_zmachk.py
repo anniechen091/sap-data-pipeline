@@ -166,10 +166,19 @@ def run_etl_zmachk(folder_path):
         unique_keys=["Article"],
         column_types=column_types
         )
+    print(f"✅ uploaded {os.getenv("TABLE_Article_MasterData")} {len(batch_df):,} rows\n")
+        
+    sql_export = """
+    SELECT *
+    FROM dbo.dim_Article
+    WHERE MCH BETWEEN '1010000' AND '1069999'
+    """
+    engine = get_sql_engine()
+    with engine.connect() as conn:
+        new_zmachk = pd.read_sql(text(sql_export), conn)
     
-    batch_df.to_csv(r"C:\Users\anniec\Documents\TAWA\AutoScript\DC Forecast - Seasonality\TawaWalong\ZMACHK_ALL.csv", index=False, encoding='utf-8-sig')
-    batch_df.to_excel(r"C:\Users\anniec\Documents\TAWA\AutoScript\DC Forecast - Seasonality\TawaWalong\ZMACHK_ALL.xlsx", index=False)
-    print(f"✅  已匯入 {os.getenv("TABLE_Article_MasterData")} {len(batch_df):,} 列\n")
+    new_zmachk.to_csv(r"C:\Users\anniec\Documents\TAWA\AutoScript\DC Forecast - Seasonality\TawaWalong\ZMACHK_ALL.csv", index=False, encoding='utf-8-sig')
+    new_zmachk.to_excel(r"C:\Users\anniec\Documents\TAWA\AutoScript\DC Forecast - Seasonality\TawaWalong\ZMACHK_ALL.xlsx", index=False)
 
     output_path = Path(folder_path) / "new_articles" / f"New_Article_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     
