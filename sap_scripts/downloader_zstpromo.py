@@ -47,11 +47,14 @@ def run_zstpromo_query(session, start_date, end_date, export_path, export_dir, f
 
         # 避免查詢卡死
         try:
-            wait_for_table(session, timeout=2400)   # 40 分鐘
+            # wait_for_table(session, timeout=2400)   # 40 分鐘
+            run_with_hard_timeout(
+                wait_for_table,
+                session=session
+            )
         except TimeoutError as te:
-            print("⚠️ 報表逾時，準備重試…")
-            # import subprocess             # 殺掉可能已卡死的 saplogon.exe
-            # subprocess.run("taskkill /IM saplogon.exe /F", shell=True)
+            print("⚠️ 報表逾時，準備重試…")       
+            os.system("taskkill /f /im saplogon.exe")  # 殺掉可能已卡死的 saplogon.exe
             raise  # 讓 safe_query() 捕捉並重登
 
         select_layout(session, "AC-ZSTPROMO")

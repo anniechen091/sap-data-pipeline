@@ -63,7 +63,19 @@ def run_zmachk_query(session, site_range_type, export_dir, filename):
 
 
         print(f"等待查詢結果...")
-        wait_for_table(session, timeout=2400)     # 40 分鐘
+        # wait_for_table(session, timeout=2400)     # 40 分鐘
+
+        try:
+            # wait_for_table(session, timeout=2400)   # 40 分鐘
+            run_with_hard_timeout(
+                wait_for_table,
+                session=session
+            )
+        except TimeoutError as te:
+            print("⚠️ 報表逾時，準備重試…")       
+            os.system("taskkill /f /im saplogon.exe")  # 殺掉可能已卡死的 saplogon.exe
+            raise  # 讓 safe_query() 捕捉並重登
+
         select_layout(session, "/AC-ZMACHK")
         wait_for_export_menu(session)
 

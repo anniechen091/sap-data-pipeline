@@ -83,7 +83,7 @@ def select_layout(session, layout_name):
 
 #  ------- 等待 Table 的方法 ------- 
 def wait_for_table(session, grid_id="wnd[0]/usr/cntlGRID1/shellcont/shell",
-                   timeout=2400, poll=1.0):
+                   timeout=3000, poll=1.0):
     t0 = time.time()
     while time.time() - t0 < timeout:
         # GUI 還忙 → 再等等
@@ -173,6 +173,19 @@ def close_all_sap_sessions():
         print("✅ 已關閉所有 SAP Sessions")
     except Exception as e:
         print(f"⚠️ 無法關閉 SAP Sessions:{e}")
+
+
+def run_with_hard_timeout(func, timeout_sec=3000, check_interval=5, *args, **kwargs):
+    start = time.time()
+    while True:
+        try:
+            return func(*args, **kwargs)
+        except Exception:
+            raise
+        finally:
+            if time.time() - start > timeout_sec:
+                raise TimeoutError(f"⏰ SAP action exceeded {timeout_sec} seconds")
+        time.sleep(check_interval)
 
 
 # ------- 錯誤記錄 -------

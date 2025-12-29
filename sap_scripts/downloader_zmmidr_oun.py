@@ -37,7 +37,20 @@ def run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filena
         session.findById("wnd[0]").sendVKey(8)
 
         print(f"等待查詢結果...")
-        wait_for_table(session, "wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell", timeout=1800)     # 30 分鐘
+        # wait_for_table(session, "wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell", timeout=1800)     # 30 分鐘
+
+        try:
+            # wait_for_table(session, timeout=2400)   # 40 分鐘
+            run_with_hard_timeout(
+                wait_for_table,
+                session=session,
+                table_id="wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell"
+            )
+        except TimeoutError as te:
+            print("⚠️ 報表逾時，準備重試…")       
+            os.system("taskkill /f /im saplogon.exe")  # 殺掉可能已卡死的 saplogon.exe
+            raise  # 讓 safe_query() 捕捉並重登
+
         select_layout(session, "AC-ZMMIDR")
         wait_for_export_menu(session)
 
@@ -78,12 +91,9 @@ def safe_query(session, dept_code, dc_code, period_str, export_dir, filename, ma
             log_error('zmmidr', msg=f"Attempt {attempt}: {e}", dept=dept_code, dc=dc_code)
             close_all_sap_sessions()
             time.sleep(3)
-            try:
-                sap_login()
-                print("🔁 已重新登入 SAP")
-            except Exception as login_err:
-                log_error('zmmidr', msg=f"Login Failed: {login_err}", dept=dept_code, dc=dc_code)
-                return False
+            sap_login()
+            print("🔁 已重新登入 SAP")
+
     return False
 
 

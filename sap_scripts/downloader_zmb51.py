@@ -63,7 +63,19 @@ def run_zmb51_query(session, start_date, end_date, site_range_type, export_dir, 
         # 執行查詢
         session.findById("wnd[0]").sendVKey(8)
         # 避免查詢卡死
-        wait_for_table(session, timeout=2400)   # 40 分鐘
+        # wait_for_table(session, timeout=2400)   # 40 分鐘
+
+        try:
+            # wait_for_table(session, timeout=2400)   # 40 分鐘
+            run_with_hard_timeout(
+                wait_for_table,
+                session=session
+            )
+        except TimeoutError as te:
+            print("⚠️ 報表逾時，準備重試…")       
+            os.system("taskkill /f /im saplogon.exe")  # 殺掉可能已卡死的 saplogon.exe
+            raise  # 讓 safe_query() 捕捉並重登
+
         # wait_for_export_menu_for_local_file(session)
 
         # 等待查詢結果
