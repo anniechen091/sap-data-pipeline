@@ -76,7 +76,7 @@ def run_etl_zmmidr_OUn(folder_path):
         df_all = df_all.drop_duplicates(subset=['Date', 'DC', 'Article'], keep='last').reset_index(drop=True)
 
     df_all.to_excel(os.path.join(folder_path, f"df_Zmmidr_OUn_{datetime.today().strftime('%m%d%Y')}.xlsx"), index=False)
-    df_all.to_excel(rf"\\TAWASHARE2\Replenishment_Data\Jimmy\Zmmidr\df_Zmmidr_OUn_{datetime.today().strftime('%m%d%Y')}.xlsx", index=False)
+    # df_all.to_excel(rf"\\TAWASHARE2\Replenishment_Data\Jimmy\Zmmidr\df_Zmmidr_OUn_{datetime.today().strftime('%m%d%Y')}.xlsx", index=False)
     print(f"已匯出所有部門的 df_Zmmidr_OUn_date.xlsx")
     Process_Dry_Zmmidr(df_all)
    
