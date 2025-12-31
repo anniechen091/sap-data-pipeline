@@ -6,6 +6,7 @@ import win32con
 import datetime
 import os
 import pandas as pd
+import threading
 from datetime import timedelta
 from dotenv import load_dotenv
 
@@ -184,8 +185,13 @@ def run_with_hard_timeout(func, timeout_sec=3000, check_interval=5, *args, **kwa
             raise
         finally:
             if time.time() - start > timeout_sec:
-                raise TimeoutError(f"⏰ SAP action exceeded {timeout_sec} seconds")
+                raise TimeoutError(f"SAP action exceeded {timeout_sec} seconds")
         time.sleep(check_interval)
+
+def kill_sap_processes():
+    # 先嘗試關 SAP GUI
+    os.system("taskkill /f /im sapgui.exe")
+    os.system("taskkill /f /im saplogon.exe")
 
 
 # ------- 錯誤記錄 -------

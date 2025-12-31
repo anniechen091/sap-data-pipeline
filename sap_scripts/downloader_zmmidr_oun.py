@@ -44,7 +44,8 @@ def run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filena
             run_with_hard_timeout(
                 wait_for_table,
                 session=session,
-                table_id="wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell"
+                timeout=2400,
+                grid_id="wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell"
             )
         except TimeoutError as te:
             print("⚠️ 報表逾時，準備重試…")       

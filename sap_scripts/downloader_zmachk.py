@@ -69,7 +69,8 @@ def run_zmachk_query(session, site_range_type, export_dir, filename):
             # wait_for_table(session, timeout=2400)   # 40 分鐘
             run_with_hard_timeout(
                 wait_for_table,
-                session=session
+                session=session,
+                timeout_sec=600
             )
         except TimeoutError as te:
             print("⚠️ 報表逾時，準備重試…")       
