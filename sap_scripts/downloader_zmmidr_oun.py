@@ -81,21 +81,18 @@ def run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filena
 def safe_query(session, dept_code, dc_code, period_str, export_dir, filename, max_retries=3):
     for attempt in range(1, max_retries + 1):
         try:
-            success = run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filename)
-            if success:
-                return True  # 成功查詢與匯出
-            else:
-                raise Exception("Query did not complete successfully")
+            run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filename)
+            return True, session  # 成功查詢與匯出
 
         except Exception as e:
             print(f"⚠️ 第 {attempt} 次失敗：{e}")
             log_error('zmmidr', msg=f"Attempt {attempt}: {e}", dept=dept_code, dc=dc_code)
             close_all_sap_sessions()
             time.sleep(3)
-            sap_login()
+            session = sap_login()
             print("🔁 已重新登入 SAP")
 
-    return False
+    return False, session
 
 
 # === 主要下載程式 ===
@@ -143,7 +140,7 @@ def download_zmmidr_OUn(EXPORT_DIR):
         
             # 建立合法檔名
             filename = f"Zmmidr_oun_{done_key}.xlsx"
-            success = safe_query(
+            success, session = safe_query(
                 session=session,
                 dept_code=dept_code,
                 dc_code=dc_code,

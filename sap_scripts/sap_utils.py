@@ -106,14 +106,16 @@ def wait_for_table(session, grid_id="wnd[0]/usr/cntlGRID1/shellcont/shell",
 
 
 #  ------- 等待導出選單的方法 ------- 
-def wait_for_export_menu(session, interval=5):
-    """無限等待，直到『導出』選單可點選"""
-    while True:
+def wait_for_export_menu(session, interval=5, max_wait=3000):
+    waited = 0
+    while waited < max_wait:
         try:
             session.findById("wnd[0]/mbar/menu[0]/menu[3]").select()
             return
         except:
             time.sleep(interval)
+            waited += interval
+    raise TimeoutError("Export menu not available within max_wait.")
 
 
 def wait_for_export_menu_for_local_file(session, interval=3, max_wait=360):
