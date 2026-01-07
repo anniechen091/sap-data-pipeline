@@ -139,44 +139,44 @@ def Process_Dry_Zmmidr(df):
     df.dropna(subset='Article', inplace=True)
     df = df[['DC', 'Article', 'Unrestricted-Use Stock', 'On order Stock']]
 
-    df_SCA = df[df['DC'].astype(str).isin(['9891', '9801'])]
-    df_SCA = df_SCA.groupby("Article", as_index=False, observed=True).agg({
-        'DC':'first',
-        'Unrestricted-Use Stock':'sum',
-        'On order Stock':'sum'
-    })
-    df_SCA['DC']='9891'
-    print("length of 9891: ", len(df[df['DC']=='9891']))
-    print("length of 9890: ", len(df[df['DC']=='9801']))
-    print("length of SCA: ", len(df_SCA))
+    # df_SCA = df[df['DC'].astype(str).isin(['9891', '9801'])]
+    # df_SCA = df_SCA.groupby("Article", as_index=False, observed=True).agg({
+    #     'DC':'first',
+    #     'Unrestricted-Use Stock':'sum',
+    #     'On order Stock':'sum'
+    # })
+    # df_SCA['DC']='9891'
+    # print("length of 9891: ", len(df[df['DC']=='9891']))
+    # print("length of 9890: ", len(df[df['DC']=='9801']))
+    # print("length of SCA: ", len(df_SCA))
 
 
-    df_EC = df[df['DC'].astype(str).isin(['9790', '9901'])]
-    df_EC = df_EC.groupby("Article", as_index=False, observed=True).agg({
-        'DC':'first',
-        'Unrestricted-Use Stock':'sum',
-        'On order Stock':'sum'
-    })
-    df_EC['DC']='9790'
+    # df_EC = df[df['DC'].astype(str).isin(['9790', '9901'])]
+    # df_EC = df_EC.groupby("Article", as_index=False, observed=True).agg({
+    #     'DC':'first',
+    #     'Unrestricted-Use Stock':'sum',
+    #     'On order Stock':'sum'
+    # })
+    # df_EC['DC']='9790'
 
-    print("length of 9790: ", len(df[df['DC']=='9790']))
-    print("length of 9901: ", len(df[df['DC']=='9901']))
-    print("length of EC: ", len(df_EC))
+    # print("length of 9790: ", len(df[df['DC']=='9790']))
+    # print("length of 9901: ", len(df[df['DC']=='9901']))
+    # print("length of EC: ", len(df_EC))
 
-    df_NCA = df[df['DC'].astype(str).isin(['9900'])]
-    df_9793 = df[df['DC'].astype(str).isin(['9793'])]
+    # df_NCA = df[df['DC'].astype(str).isin(['9900'])]
+    # df_9793 = df[df['DC'].astype(str).isin(['9793'])]
 
 
-    df_all = pd.concat([df_SCA, df_NCA, df_EC, df_9793], ignore_index=True)
-    df_all.insert(0, 'Article NoDC', df_all['DC'].astype(str) + df_all['Article'].astype(str))
+    # df_all = pd.concat([df_SCA, df_NCA, df_EC, df_9793], ignore_index=True)
+    df.insert(0, 'Article NoDC', df['DC'].astype(str) + df['Article'].astype(str))
 
     current_inv_fp = os.getenv("current_inv_fp")
     history_inv_fp = os.getenv("history_inv_fp")
     
-    df_all.to_excel(os.path.join(current_inv_fp, "df_Zmmidr_OUn.xlsx"), index=False)
-    df_all.to_excel(os.path.join(history_inv_fp, f"df_Zmmidr_OUn_{datetime.today().date().strftime('%m%d%Y')}.xlsx"), index=False)
-    df_all.to_excel(r"\\TAWASHARE2\Replenishment_Data\Jimmy\Zmmidr\df_Zmmidr_OUn.xlsx", index=False)
-    print(f"已匯出合併庫存 Zmmidr 至 {current_inv_fp} 及 {history_inv_fp} 及 共享資料夾")
+    df.to_excel(os.path.join(current_inv_fp, "df_Zmmidr_OUn.xlsx"), index=False)
+    df.to_excel(os.path.join(history_inv_fp, f"df_Zmmidr_OUn_{datetime.today().date().strftime('%m%d%Y')}.xlsx"), index=False)
+    df.to_excel(r"\\TAWASHARE2\Replenishment_Data\Jimmy\Zmmidr\df_Zmmidr_OUn.xlsx", index=False)
+    print(f"已匯出庫存 Zmmidr 至 {current_inv_fp} 及 {history_inv_fp} 及 共享資料夾")
 
 
 if __name__ == "__main__":
