@@ -67,6 +67,7 @@ def run_etl_zmmidr_OUn(folder_path):
     # 數字清洗
     df_all['Unrestricted-Use Stock'] = df_all['Unrestricted-Use Stock'].apply(clean_number)
     df_all['On order Stock'] = df_all['On order Stock'].apply(clean_number)
+    df_all['Quality Stock'] = df_all['Quality Stock'].apply(clean_number)
     df_all.insert(0, 'Date', datetime.today().date())
 
     if df_all.duplicated(subset=['Date', 'DC', 'Article']).any():
@@ -95,6 +96,7 @@ def run_etl_zmmidr_OUn(folder_path):
     'Unrestricted-Use Stock': DECIMAL(14, 6),       # 庫存量（數量）
     'Allocation Qty': DECIMAL(14, 6),               # 分配量（數量）
     'On order Stock': DECIMAL(14, 6),               # 已訂購庫存（數量）
+    'Quality Stock': DECIMAL(14, 6),                # 被FDA Hold（數量）
     'Unrestricted Stock Value': DECIMAL(14, 6),# 庫存價值（高金額）
     'PTD MVMT': DECIMAL(14, 6),                     # 本期移動量
     'YTD MVMT': DECIMAL(14, 6),                     # 年累計移動量
@@ -137,7 +139,7 @@ def Process_Dry_Zmmidr(df):
     # df = df[df['Dept']=='106']
     # df.drop(columns='Dept', inplace=True)
     df.dropna(subset='Article', inplace=True)
-    df = df[['DC', 'Article', 'Unrestricted-Use Stock', 'On order Stock']]
+    df = df[['DC', 'Article', 'Unrestricted-Use Stock', 'On order Stock', 'Quality Stock']]
 
     # df_SCA = df[df['DC'].astype(str).isin(['9891', '9801'])]
     # df_SCA = df_SCA.groupby("Article", as_index=False, observed=True).agg({

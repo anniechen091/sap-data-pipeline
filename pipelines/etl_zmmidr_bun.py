@@ -58,6 +58,7 @@ def run_etl_zmmidr_BUn(folder_path):
     # 數字清洗
     df_all['Unrestricted-Use Stock'] = df_all['Unrestricted-Use Stock'].apply(clean_number)
     df_all['On order Stock'] = df_all['On order Stock'].apply(clean_number)
+    df_all['Quality Stock'] = df_all['Quality Stock'].apply(clean_number)
     df_all.insert(0, 'Date', datetime.today().date())
 
     if df_all.duplicated(subset=['Date', 'DC', 'Article']).any():
@@ -85,6 +86,7 @@ def run_etl_zmmidr_BUn(folder_path):
     'Unrestricted-Use Stock': DECIMAL(14, 6),       # 庫存量（數量）
     'Allocation Qty': DECIMAL(14, 6),               # 分配量（數量）
     'On order Stock': DECIMAL(14, 6),               # 已訂購庫存（數量）
+    'Quality Stock': DECIMAL(14, 6),                # 被FDA Hold（數量）
     'Unrestricted Stock Value': DECIMAL(14, 6),# 庫存價值（高金額）
     'PTD MVMT': DECIMAL(14, 6),                     # 本期移動量
     'YTD MVMT': DECIMAL(14, 6),                     # 年累計移動量
@@ -126,42 +128,42 @@ def Process_Dry_Zmmidr(df):
     # df = df[df['Dept']=='106']
     # df.drop(columns='Dept', inplace=True)
     df.dropna(subset='Article', inplace=True)
-    df = df[['DC', 'Article', 'Unrestricted-Use Stock', 'On order Stock']]
+    df = df[['DC', 'Article', 'Unrestricted-Use Stock', 'On order Stock', 'Quality Stock']]
 
-    df_SCA = df[df['DC'].astype(str).isin(['9891', '9801'])]
-    df_SCA = df_SCA.groupby("Article", as_index=False, observed=True).agg({
-        'DC':'first',
-        'Unrestricted-Use Stock':'sum',
-        'On order Stock':'sum'
-    })
-    df_SCA['DC']='9891'
-    print("length of 9891: ", len(df[df['DC']=='9891']))
-    print("length of 9890: ", len(df[df['DC']=='9801']))
-    print("length of SCA: ", len(df_SCA))
+    # df_SCA = df[df['DC'].astype(str).isin(['9891', '9801'])]
+    # df_SCA = df_SCA.groupby("Article", as_index=False, observed=True).agg({
+    #     'DC':'first',
+    #     'Unrestricted-Use Stock':'sum',
+    #     'On order Stock':'sum'
+    # })
+    # df_SCA['DC']='9891'
+    # print("length of 9891: ", len(df[df['DC']=='9891']))
+    # print("length of 9890: ", len(df[df['DC']=='9801']))
+    # print("length of SCA: ", len(df_SCA))
 
-    df_EC = df[df['DC'].astype(str).isin(['9790', '9901'])]
-    df_EC = df_EC.groupby("Article", as_index=False, observed=True).agg({
-        'DC':'first',
-        'Unrestricted-Use Stock':'sum',
-        'On order Stock':'sum'
-    })
-    df_EC['DC']='9790'
+    # df_EC = df[df['DC'].astype(str).isin(['9790', '9901'])]
+    # df_EC = df_EC.groupby("Article", as_index=False, observed=True).agg({
+    #     'DC':'first',
+    #     'Unrestricted-Use Stock':'sum',
+    #     'On order Stock':'sum'
+    # })
+    # df_EC['DC']='9790'
 
-    print("length of 9790: ", len(df[df['DC']=='9790']))
-    print("length of 9901: ", len(df[df['DC']=='9901']))
-    print("length of EC: ", len(df_EC))
+    # print("length of 9790: ", len(df[df['DC']=='9790']))
+    # print("length of 9901: ", len(df[df['DC']=='9901']))
+    # print("length of EC: ", len(df_EC))
 
-    df_NCA = df[df['DC'].astype(str).isin(['9900'])]
-    df_9793 = df[df['DC'].astype(str).isin(['9793'])]
+    # df_NCA = df[df['DC'].astype(str).isin(['9900'])]
+    # df_9793 = df[df['DC'].astype(str).isin(['9793'])]
 
-    df_all = pd.concat([df_SCA, df_NCA, df_EC, df_9793], ignore_index=True)
-    df_all.insert(0, 'Article NoDC', df_all['DC'].astype(str) + df_all['Article'].astype(str))
+    # df_all = pd.concat([df_SCA, df_NCA, df_EC, df_9793], ignore_index=True)
+    df.insert(0, 'Article NoDC', df['DC'].astype(str) + df['Article'].astype(str))
 
     current_inv_fp = os.getenv("current_inv_fp")
     history_inv_fp = os.getenv("history_inv_fp")
     
-    df_all.to_excel(os.path.join(current_inv_fp, "df_Zmmidr_BUn.xlsx"), index=False)
-    df_all.to_excel(os.path.join(history_inv_fp, f"df_Zmmidr_BUn_{datetime.today().date().strftime('%m%d%Y')}.xlsx"), index=False)
+    df.to_excel(os.path.join(current_inv_fp, "df_Zmmidr_BUn.xlsx"), index=False)
+    df.to_excel(os.path.join(history_inv_fp, f"df_Zmmidr_BUn_{datetime.today().date().strftime('%m%d%Y')}.xlsx"), index=False)
     print(f"已匯出 Dry Grocery 的 Zmmidr 至 {current_inv_fp} 及 {history_inv_fp}")
 
 
