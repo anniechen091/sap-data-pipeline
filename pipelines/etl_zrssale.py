@@ -60,7 +60,7 @@ def run_etl_zrssale_D2(folder_path):
             dfs.append(df)
 
         batch_df = pd.concat(dfs, ignore_index=True)
-        batch_df = batch_df.drop_duplicates(subset=['Article'])
+        # batch_df = batch_df.drop_duplicates(subset=['Article', 'Site', 'Bill. Date'])
         batch_df['Article'] = batch_df['Article'].astype(str).str.strip()
 
         for col in batch_df.columns:
@@ -448,10 +448,9 @@ def run_etl_zrssale_D3(folder_path):
 
 if __name__ == "__main__":
 
-    download_zrssale(os.getenv("DATE_FILE_ZRSSALE"), os.getenv("EXPORT_DIR_ZRSSALE"))
+    # download_zrssale(os.getenv("DATE_FILE_WALONG_SALES"), os.getenv("EXPORT_DIR_ZRSSALE"))
     run_etl_zrssale_D2(os.getenv("EXPORT_DIR_ZRSSALE"))
-    run_etl_zrssale_D3(os.getenv("EXPORT_DIR_ZRSSALE"))
-    # run_etl_zrssale(r"C:\Users\anniec\Documents\TAWA\AutoScript\ETL_SAP\data")
+    # run_etl_zrssale_D3(os.getenv("EXPORT_DIR_ZRSSALE"))
 
 
 
