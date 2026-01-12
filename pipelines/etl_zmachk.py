@@ -171,7 +171,6 @@ def run_etl_zmachk(folder_path):
     sql_export = """
     SELECT *
     FROM dbo.dim_Article
-    WHERE MCH BETWEEN '1010000' AND '1069999'
     """
     engine = get_sql_engine()
     with engine.connect() as conn:
