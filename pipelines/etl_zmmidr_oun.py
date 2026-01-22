@@ -36,7 +36,8 @@ def run_etl_zmmidr_OUn(folder_path):
     print("🔹 開始清理 Zmmidr_OUn 檔案...")
     
     # 遍歷所有 Excel 檔案，格式如 Zmmidr_106_9801_06012025.xlsx
-    file_pattern = re.compile(r'Zmmidr_oun_(\d{3})_(\d{4})_\d{8}\.xlsx')
+    # file_pattern = re.compile(r'Zmmidr_oun_(\d{3})_(\d{4})_\d{8}\.xlsx')
+    file_pattern = re.compile(r'Zmmidr_oun_(\d{3})_(\d{4})_\d{8}.*?\.xlsx')
     dept_dfs = defaultdict(list)
     processed_dir = os.path.join(folder_path, "processed")
     os.makedirs(processed_dir, exist_ok=True)

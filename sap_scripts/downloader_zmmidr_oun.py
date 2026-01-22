@@ -31,6 +31,19 @@ def run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filena
             session.findById("wnd[0]/usr/ctxtS_MATKL-HIGH").text = f"{dept_code}99999"
         else:
             session.findById("wnd[0]/usr/ctxtS_MATKL-HIGH").text = f"10499999"
+        
+        if dept_code == 106:
+            session.findById("wnd[0]/usr/btn%_SMATNR_%_APP_%-VALU_PUSH").press()
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV").select()
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,0]").text = "3604942"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,1]").text = "3604189"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,2]").text = "3604910"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,3]").text = "3604914"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,4]").text = "3604907"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,5]").text = "3604190"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,6]").text = "3604908"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,7]").text = "3604919"
+            session.findById("wnd[1]/tbar[0]/btn[8]").press() 
 
 
         session.findById("wnd[0]/usr/radP_OUNIT").select()
@@ -40,11 +53,11 @@ def run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filena
         # wait_for_table(session, "wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell", timeout=1800)     # 30 分鐘
 
         try:
-            # wait_for_table(session, timeout=2400)   # 40 分鐘
+            # wait_for_table(session, timeout=2400)   # 60 分鐘
             run_with_hard_timeout(
                 wait_for_table,
                 session=session,
-                timeout=2400,
+                timeout=3600,
                 grid_id="wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell"
             )
         except TimeoutError as te:
@@ -108,6 +121,7 @@ def download_zmmidr_OUn(EXPORT_DIR):
     'Dairy & Frozen': 103,
     'Dry Grocery': 106,
     'Non Food': 105,
+    
     }
 
     if not os.path.exists(EXPORT_DIR):
@@ -139,7 +153,7 @@ def download_zmmidr_OUn(EXPORT_DIR):
                 continue
         
             # 建立合法檔名
-            filename = f"Zmmidr_oun_{done_key}.xlsx"
+            filename = f"Zmmidr_oun_{done_key}.xlsx".strip()
             success, session = safe_query(
                 session=session,
                 dept_code=dept_code,
