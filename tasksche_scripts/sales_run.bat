@@ -1,5 +1,9 @@
 @echo off
 
+REM *** 新增：在執行任何 ETL 之前，先執行 VPN 自動連線 ***
+echo [%DATE% %TIME%] Starting VPN Connection Check...
+powershell -ExecutionPolicy Bypass -File "C:\Users\anniec\Documents\TAWA\AutoScript\ETL_SAP\tasksche_scripts\Start-VPN-ETL.ps1"
+
 REM 錯誤除錯：將環境變量 PATH 輸出到一個臨時文件
 echo %PATH% > C:\Users\anniec\Documents\TAWA\AutoScript\ETL_SAP\logs\sales_path_debug.txt
 
