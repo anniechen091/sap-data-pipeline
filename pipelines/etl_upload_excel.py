@@ -69,6 +69,7 @@ excel_configs = {
             "Region": types.NVARCHAR(5),
             "Region2" : types.NVARCHAR(12),
             "Region3" : types.NVARCHAR(12),
+            "Region4" : types.NVARCHAR(12),
             "State": types.NVARCHAR(2),
             "Company_Code": types.NVARCHAR(7),
             "Store_Name": types.NVARCHAR(20),
