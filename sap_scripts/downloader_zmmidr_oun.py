@@ -116,11 +116,12 @@ def download_zmmidr_OUn(EXPORT_DIR):
     # === 設定參數 ===
     DC_CODES = ["9801", "9891", "9900", "9901", "9790", "9793", "9905"]
     dept_name_to_code = {
-    'Alcohol': 102,
+
     'Leisure Food': 101,
+    'Alcohol': 102,
     'Dairy & Frozen': 103,
-    'Dry Grocery': 106,
     'Non Food': 105,
+    'Dry Grocery': 106,
     
     }
 
