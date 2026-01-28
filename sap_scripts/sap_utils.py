@@ -220,7 +220,6 @@ def log_error(flow_name, msg, log_file=None, **kwargs):
 #--------------更新日期 --------------
 
 def update_sales_search_date(file_path, fill_missing=True):
-    file_path = file_path
     df = pd.read_excel(file_path)
     df["Start"] = pd.to_datetime(df["Start"])
     df["End"] = pd.to_datetime(df["End"])
@@ -229,6 +228,7 @@ def update_sales_search_date(file_path, fill_missing=True):
     last_start = df["Start"].max()
     last_end = df["End"].max()
     today = pd.Timestamp.today().normalize()
+    print(f"Latest week in file: {last_start.strftime('%m/%d/%Y')} - {last_end.strftime('%m/%d/%Y')}")
 
     # 滿一週（或多週）就補
     while today > (last_end + timedelta(days=7)):
@@ -241,12 +241,13 @@ def update_sales_search_date(file_path, fill_missing=True):
             )
             added += 1
         last_end = new_end
+        print(f"Added weeks: {new_start.strftime('%m/%d/%Y')} - {new_end.strftime('%m/%d/%Y')}")
 
     if added > 0:
         df["Start"] = df["Start"].dt.strftime("%m/%d/%Y").astype(str)
         df["End"] = df["End"].dt.strftime("%m/%d/%Y").astype(str)
         df.to_excel(file_path, index=False)
-        print(f"Added {added} new week(s). Latest week: {last_end.strftime('%m/%d/%Y')}")
+        print(f"Finally added {added} new week(s). Latest week: {last_end.strftime('%m/%d/%Y')}")
     else:
         print("No new week to add - up to date.")
         

@@ -46,7 +46,7 @@ for ($i = 1; $i -le 3; $i++) {
 
 # 4. Wait for Tunnel Establishment (60s recommended for overseas connection)
 Write-Host "Waiting 60 seconds for secure tunnel establishment..." -ForegroundColor Yellow
-Start-Sleep -Seconds 660
+Start-Sleep -Seconds 6600
 
 # 5. Final Connection Validation
 $check = Test-NetConnection $TargetSQL -Port 1433 -WarningAction SilentlyContinue
