@@ -1,7 +1,12 @@
 import sys, os, io
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+# sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+import functools
+print = functools.partial(print, flush=True)
 
 
 import os
