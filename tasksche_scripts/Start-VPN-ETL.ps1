@@ -44,19 +44,42 @@ for ($i = 1; $i -le 3; $i++) {
     }
 }
 
-# 4. Wait for Tunnel Establishment (60s recommended for overseas connection)
-Write-Host "Waiting 60 seconds for secure tunnel establishment..." -ForegroundColor Yellow
-Start-Sleep -Seconds 6600
+# 4. Wait for Tunnel Establishment (check every 60s, up to 10 minutes)
+Write-Host "Waiting for secure tunnel establishment (check every 60s, max 10 minutes)..." -ForegroundColor Yellow
 
-# 5. Final Connection Validation
-$check = Test-NetConnection $TargetSQL -Port 1433 -WarningAction SilentlyContinue
+$maxMinutes = 10
+$intervalSeconds = 60
+$connected = $false
 
-if ($check.TcpTestSucceeded) {
+for ($m = 1; $m -le $maxMinutes; $m++) {
+
+    Write-Host ("Check {0}/{1}: testing reachability to {2}:1433 ..." -f $m, $maxMinutes, $TargetSQL)
+
+    $check = Test-NetConnection $TargetSQL -Port 1433 -WarningAction SilentlyContinue
+
+    if ($check.TcpTestSucceeded) {
+        Write-Host "Tunnel is up ✅ (reachable now)" -ForegroundColor Green
+        $connected = $true
+        break
+    }
+
+    if ($m -lt $maxMinutes) {
+        Write-Host "Not yet. Sleeping 60 seconds..." -ForegroundColor DarkGray
+        Start-Sleep -Seconds $intervalSeconds
+    }
+}
+
+# 5. Final Connection Validation / Exit
+if ($connected) {
     Write-Host "==============================================" -ForegroundColor Green
     Write-Host "SUCCESS: VPN Connected and $TargetSQL is Reachable!" -ForegroundColor Green
     Write-Host "==============================================" -ForegroundColor Green
+    exit 0
 } else {
-    Write-Host "FAILED: $TargetSQL is still NOT reachable." -ForegroundColor Red
+    Write-Host "==============================================" -ForegroundColor Red
+    Write-Host "FAILED: VPN not established within $maxMinutes minutes." -ForegroundColor Red
+    Write-Host "==============================================" -ForegroundColor Red
+    exit 1
 }
 
 Pop-Location
