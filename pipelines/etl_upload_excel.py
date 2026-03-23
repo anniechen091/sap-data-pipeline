@@ -90,27 +90,27 @@ excel_configs = {
         }
     },
 
-        "Tawa_Fcst.xlsx": {
-        "table": "fact_Forecast",
-        "pk": ["Article_NoDC"],
-        "dtype": {
-            "Site": types.NVARCHAR(10),
-            "Article": types.NVARCHAR(20),
-            "Tawa_Fsct": types.DECIMAL(18, 6),
-            "Tawa_Fsct_Inlcude_Promo": types.DECIMAL(18, 6),
-            "Tawa_On_Order": types.DECIMAL(18, 6),
-            "Qty_Oun": types.NVARCHAR(10),
-            "Walong_Fcst": types.DECIMAL(18, 6),
-            "Walong_Fcst_Include_promo": types.DECIMAL(18, 6),
-            "Lead_Time": types.DECIMAL(18, 6),
-            "Order_Interval": types.DECIMAL(18, 6),
-            "Safety_Stock": types.DECIMAL(18, 6),
-            "Fina_Order_Qty": types.DECIMAL(18, 6),
-            "Dept": types.NVARCHAR(50),
-            "Article_NoDC": types.NVARCHAR(20),
-            "Date": types.DATE()
-        }
-    },
+    #     "Tawa_Fcst.xlsx": {
+    #     "table": "fact_Forecast",
+    #     "pk": ["Article_NoDC"],
+    #     "dtype": {
+    #         "Site": types.NVARCHAR(10),
+    #         "Article": types.NVARCHAR(20),
+    #         "Tawa_Fsct": types.DECIMAL(18, 6),
+    #         "Tawa_Fsct_Inlcude_Promo": types.DECIMAL(18, 6),
+    #         "Tawa_On_Order": types.DECIMAL(18, 6),
+    #         "Qty_Oun": types.NVARCHAR(10),
+    #         "Walong_Fcst": types.DECIMAL(18, 6),
+    #         "Walong_Fcst_Include_promo": types.DECIMAL(18, 6),
+    #         "Lead_Time": types.DECIMAL(18, 6),
+    #         "Order_Interval": types.DECIMAL(18, 6),
+    #         "Safety_Stock": types.DECIMAL(18, 6),
+    #         "Fina_Order_Qty": types.DECIMAL(18, 6),
+    #         "Dept": types.NVARCHAR(50),
+    #         "Article_NoDC": types.NVARCHAR(20),
+    #         "Date": types.DATE()
+    #     }
+    # },
 
         "MCH-Dept head.xlsx": {
         "table": "dim_MCH_CM",
@@ -133,6 +133,20 @@ excel_configs = {
         "dtype": {
             "Division": types.INTEGER(),
             "Description": types.NVARCHAR(20),
+        }
+    },
+
+    "Forecast Table.xlsx": {
+        "table": "fact_Forecast",
+        "pk": ["Site", "Article", "Year", "Month"],
+        "dtype": {
+            "Site": types.NVARCHAR(5),
+            "Article": types.NVARCHAR(10),
+            "Year" : types.INTEGER(),
+            "Month" : types.INTEGER(),
+            "Sales_Qty": types.DECIMAL(18, 6),
+            "Forecast_Qty" : types.DECIMAL(18, 6),
+
         }
     },
     # 可以加入更多 Excel
