@@ -138,7 +138,7 @@ def download_zmachk(EXPORT_DIR):
         
     print("🔹 開始 download_zmachk...")
 
-    for site_range_type in ["1", "2", "3", "4", "5", "6", "7"]:
+    for site_range_type in ["1", "2", "3", "4", "5", "6", "7", "8"]:
 
         done_key = f"{datetime.datetime.now().strftime('%m%d%Y')}_{site_range_type}"
         filename = f"ZMACHK_{done_key}.xlsx"
