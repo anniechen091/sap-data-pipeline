@@ -90,6 +90,17 @@ excel_configs = {
         }
     },
 
+    "SGR_mapping.XLSX": {
+        "table": "dim_SGR_mapping",
+        "pk": ["Sales_Group"],
+        "dtype": {
+            "Sales_Group": types.NVARCHAR(10),
+            "Channel": types.NVARCHAR(20),
+            "Sales_District": types.NVARCHAR(20),
+            "Sales_Office": types.NVARCHAR(10),
+        }
+    },
+
     #     "Tawa_Fcst.xlsx": {
     #     "table": "fact_Forecast",
     #     "pk": ["Article_NoDC"],
@@ -149,6 +160,50 @@ excel_configs = {
 
         }
     },
+
+        "Upload_Forecast.xlsx": {
+        "table": "fact_Forecast",
+        "pk": ["Site", "Article", "Year", "Month"],
+        "dtype": {
+            "Year": types.INTEGER(),
+            "Month": types.INTEGER(),
+            "Site": types.NVARCHAR(5),       
+            "Article": types.NVARCHAR(10),    
+            "MCH": types.INTEGER(),
+            "Store_Listing": types.INTEGER(),
+            "Vendor_Code": types.INTEGER(),
+            "Lead_Time": types.INTEGER(),
+            "Order_interval": types.INTEGER(),
+            "Safety_Stock": types.INTEGER(),
+
+            "Walong_Status": types.NVARCHAR(50),
+            "Tawa_Status": types.NVARCHAR(50),
+            "Vendor_Name": types.NVARCHAR(255),
+            "MOQ": types.NVARCHAR(50), 
+            "MOQ_Port": types.NVARCHAR(100),
+            "Adj_Final_order_QTY": types.NVARCHAR(50),
+
+            "Inventory_OUn": types.DECIMAL(18, 6),
+            "OnOrder_OUn": types.DECIMAL(18, 6),
+            "FDA_Hold": types.DECIMAL(18, 6),
+            "DOH": types.DECIMAL(18, 6),
+            "Tawa_FCST_QTY": types.DECIMAL(18, 6),
+            "Adj_Fcst_QTY_by_CM": types.DECIMAL(18, 6),
+            "Promotion_QTY_by_CM": types.DECIMAL(18, 6),
+            "Tawa_Final_Fcst": types.DECIMAL(18, 6),
+            "Tawa_Final_Fcst_Include_Promo": types.DECIMAL(18, 6),
+            "Walong_FCST_QTY_4Wk": types.DECIMAL(18, 6),
+            "Adj_Fcst_QTY_by_BM": types.DECIMAL(18, 6),
+            "Extra_QTY_by_BM": types.DECIMAL(18, 6),
+            "Walong_Final_Fcst": types.DECIMAL(18, 6),
+            "Walong_Final_Fcst_Include_Promo": types.DECIMAL(18, 6),
+            "Walong_Tawa_Forecast": types.DECIMAL(18, 6),
+            "Order_QTY": types.DECIMAL(18, 6),
+            "Adj_Final_order_QTY": types.DECIMAL(18, 6), 
+            "Order_ETA_by_Lead_Time": types.Date()
+        }
+    },
+
     # 可以加入更多 Excel
     # "xxx.xlsx": {...}
 }

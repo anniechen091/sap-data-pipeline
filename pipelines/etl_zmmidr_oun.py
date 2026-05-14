@@ -77,7 +77,7 @@ def run_etl_zmmidr_OUn(folder_path):
     df_all.insert(0, 'Date', datetime.today().date())
 
     if df_all.duplicated(subset=['Date', 'DC', 'Article']).any():
-        duplicate_count = len(df_all.duplicated(subset=['Date', 'DC', 'Article']).sum())
+        duplicate_count = df_all.duplicated(subset=['Date', 'DC', 'Article']).sum()
         print(f" {duplicate_count} duplicates found, have been removed.")
         print(df_all[df_all.duplicated(subset=['Date', 'DC', 'Article'])])
         df_all = df_all.drop_duplicates(subset=['Date', 'DC', 'Article'], keep='last').reset_index(drop=True)

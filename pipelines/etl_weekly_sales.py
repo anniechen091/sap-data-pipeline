@@ -114,4 +114,4 @@ def run_etl_weekly_sales(min_wk: int, max_wk: int,output_excel= None):
 if __name__ == "__main__":
     output_path = os.getenv('EXPORT_DIR_WEEKLY_SALES')
     # run_etl_weekly_sales(output_excel=output_path)
-    run_etl_weekly_sales(min_wk=202528, max_wk=202528)
+    run_etl_weekly_sales(min_wk=202613, max_wk=202614)
