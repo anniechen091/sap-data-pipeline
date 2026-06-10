@@ -29,11 +29,11 @@ def get_sql_engine():
 #         f"Trusted_Connection=yes;"
 #         f"CHARSET=UTF8;"
 #     )
-#     # 🔥 使用 pyodbc 原生連線，開啟 fast_executemany
+#     # 使用 pyodbc 原生連線，開啟 fast_executemany
 #     conn = pyodbc.connect(conn_str)
 #     # conn.fast_executemany = True  # ← 加上這一行，加速 INSERT 效能
 
-#     # ✅ 交給 SQLAlchemy 建立 engine
+#     #  交給 SQLAlchemy 建立 engine
 #     engine = create_engine("mssql+pyodbc://", creator=lambda: conn)
 #     return engine
 
