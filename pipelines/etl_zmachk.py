@@ -37,6 +37,58 @@ def run_etl_zmachk(folder_path):
     batch_df = batch_df.drop_duplicates(subset=['Article'])
     print("Length:", len(batch_df), " \nContent: \n", batch_df)
 
+    # ---------- 欄位整理 ----------
+    legacy_source_cols = [
+        "Article",
+        "Article Description",
+        "Chinese Desc.",
+        "Merchandise Category",
+        "Valid-From Date",
+        "Size/dimensions",
+        "BUn",
+        "BUn Conv.",
+        "D/I",
+        "D/I Conv.",
+        "SUn",
+        "SUn Conv.",
+        "OUn",
+        "Oun to Bun Conv",
+        "FI Wtunit",
+        "FIWtconv.",
+        "Brand Name",
+        "Country of origin of the article",
+        "Minimum Remaining Shelf Life",
+        "Total shelf life",
+        "Source of Supply",
+        "Assortment",
+        "Ethnicity",
+        "Product Type",
+        "DOH Target",
+        "Lead Time",
+        "Stock Plan Frequency",
+        "Supplier Channel",
+        "Seasonal",
+        "Item Status",
+        "Status WS E",
+        "Status WS W",
+        "Status SCA",
+        "Status NCA",
+        "Status TX",
+        "Status EC",
+        "Retail Channel",
+        "Status Online",
+        "WholeSale Channel",
+        "Wacine Ordering",
+    ]
+    missing_cols = [c for c in legacy_source_cols if c not in batch_df.columns]
+    if missing_cols:
+        print("❌ 缺少以下舊欄位：")
+        print(missing_cols)
+        raise ValueError(f"{fp.name} 缺少必要欄位")
+    
+    batch_df = batch_df[legacy_source_cols].copy()
+
+
     batch_df.rename(columns={
             "Article Description": "Article_Description",
             "Chinese Desc.":  "Chinese_Desc",
@@ -156,17 +208,25 @@ def run_etl_zmachk(folder_path):
         "Retail_Channel": NVARCHAR(5),
         "Status_Online": NVARCHAR(5),
         "WholeSale_Channel": NVARCHAR(5),
-        "Wachine_Ordering": NVARCHAR(5),
+        "Wachine_Ordering": NVARCHAR(30),
     }
     
     batch_df = clean_df_by_sql_schema(batch_df, "dbo.dim_Article")
+
+    # Python 端先檢查文字欄位長度
+    diagnose_df_against_column_types(
+        batch_df,
+        column_types,
+        output_dir=Path(folder_path)
+    )
+    
     upsert_batch(
         df=batch_df,
         target_table=os.getenv("TABLE_Article_MasterData"),
         unique_keys=["Article"],
         column_types=column_types
         )
-    print(f"✅ uploaded {os.getenv("TABLE_Article_MasterData")} {len(batch_df):,} rows\n")
+    print(f"✅ uploaded {os.getenv('TABLE_Article_MasterData')} {len(batch_df):,} rows\n")
         
     sql_export = """
     SELECT *
@@ -201,8 +261,94 @@ def run_etl_zmachk(folder_path):
     print("🎉 全部批次處理結束")
 
 
+def diagnose_df_against_column_types(df, column_types, output_dir=None):
+    """
+    用 Python 端檢查 DataFrame 的文字欄位長度是否超過 column_types 定義的 NVARCHAR/VARCHAR 長度。
+    不需要資料先進 SQL。
+    """
+
+    if output_dir is None:
+        output_dir = Path.cwd()
+    else:
+        output_dir = Path(output_dir)
+
+    output_dir.mkdir(exist_ok=True)
+
+    reports = []
+    issues = []
+
+    for col, sql_type in column_types.items():
+        if col not in df.columns:
+            continue
+
+        # 只檢查有 length 的文字欄位，例如 NVARCHAR(255), VARCHAR(50)
+        sql_max_len = getattr(sql_type, "length", None)
+
+        if sql_max_len is None:
+            continue
+
+        # 避免 NaN 被轉成字串 "nan"
+        s = df[col].where(df[col].notna(), "").astype(str)
+        lengths = s.str.len()
+
+        max_len = int(lengths.max()) if len(lengths) > 0 else 0
+        max_idx = lengths.idxmax() if len(lengths) > 0 else None
+
+        sample_article = df.loc[max_idx, "Article"] if max_idx is not None and "Article" in df.columns else None
+        sample_value = df.loc[max_idx, col] if max_idx is not None else None
+
+        reports.append({
+            "Column": col,
+            "SQL_Max_Length": sql_max_len,
+            "DF_Max_Length": max_len,
+            "Sample_Article": sample_article,
+            "Sample_Value": sample_value,
+        })
+
+        bad_mask = lengths > sql_max_len
+
+        if bad_mask.any():
+            bad = df.loc[bad_mask, ["Article", col]].copy() if "Article" in df.columns else df.loc[bad_mask, [col]].copy()
+            bad["Column"] = col
+            bad["Actual_Length"] = lengths.loc[bad_mask].values
+            bad["SQL_Max_Length"] = sql_max_len
+            bad["Value"] = df.loc[bad_mask, col].values
+
+            keep_cols = ["Column"]
+            if "Article" in bad.columns:
+                keep_cols.append("Article")
+            keep_cols += ["Actual_Length", "SQL_Max_Length", "Value"]
+
+            issues.append(bad[keep_cols])
+
+    report_df = pd.DataFrame(reports).sort_values(
+        by=["DF_Max_Length", "SQL_Max_Length"],
+        ascending=False
+    )
+
+    report_path = output_dir / "ZMACHK_length_report.xlsx"
+    report_df.to_excel(report_path, index=False)
+
+    print("📏 文字欄位最大長度檢查結果：")
+    print(report_df.to_string(index=False))
+    print(f"📄 長度報告已匯出：{report_path}")
+
+    if issues:
+        issue_df = pd.concat(issues, ignore_index=True)
+        issue_path = output_dir / "ZMACHK_truncation_issues.xlsx"
+        issue_df.to_excel(issue_path, index=False)
+
+        print("❌ 找到會造成 String or binary data would be truncated 的資料：")
+        print(issue_df.head(100).to_string(index=False))
+        print(f"📄 問題資料已匯出：{issue_path}")
+
+        raise ValueError("DataFrame contains values longer than SQL column length.")
+
+    print("✅ Python 端檢查通過：所有文字欄位長度都符合 column_types")
+
+
 
 if __name__ == "__main__":
 
-    download_zmachk(os.getenv("EXPORT_DIR_ZMACHK"))
+    # download_zmachk(os.getenv("EXPORT_DIR_ZMACHK"))
     run_etl_zmachk(os.getenv("EXPORT_DIR_ZMACHK")) 

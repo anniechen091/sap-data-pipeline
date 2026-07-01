@@ -26,6 +26,10 @@ from dotenv import load_dotenv
 from ETL_SAP.sap_scripts.downloader_zmmidr_bun import download_zmmidr_BUn
 from ETL_SAP.pipelines.etl_zmmidr_bun import run_etl_zmmidr_BUn
 
+
+from ETL_SAP.pipelines.etl_zmachk import run_etl_zmachk
+from ETL_SAP.sap_scripts.downloader_zmachk import download_zmachk
+
 load_dotenv()
 
 def load_zmmidr_file(filepath, dc):
@@ -191,6 +195,9 @@ if __name__ == "__main__":
 
     download_zmmidr_OUn(os.getenv("EXPORT_DIR_ZMMIDR_OUn"))
     run_etl_zmmidr_OUn(os.getenv("EXPORT_DIR_ZMMIDR_OUn"))
+
+    download_zmachk(os.getenv("EXPORT_DIR_ZMACHK"))
+    run_etl_zmachk(os.getenv("EXPORT_DIR_ZMACHK")) 
 
 
     
