@@ -326,12 +326,8 @@ def diagnose_df_against_column_types(df, column_types, output_dir=None):
         ascending=False
     )
 
-    report_path = output_dir / "ZMACHK_length_report.xlsx"
-    report_df.to_excel(report_path, index=False)
-
     print("📏 文字欄位最大長度檢查結果：")
     print(report_df.to_string(index=False))
-    print(f"📄 長度報告已匯出：{report_path}")
 
     if issues:
         issue_df = pd.concat(issues, ignore_index=True)
