@@ -48,6 +48,8 @@ def run_zmmidr_query(session, dc_code, dept_code, period_str, export_dir, filena
             session.findById("wnd[0]/usr/btn%_SMATNR_%_APP_%-VALU_PUSH").press()
             session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV").select()
             session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,0]").text = "3677426"
+            session.findById("wnd[1]/usr/tabsTAB_STRIP/tabpNOSV/ssubSCREEN_HEADER:SAPLALDB:3030/tblSAPLALDBSINGLE_E/ctxtRSCSEL_255-SLOW_E[1,1]").text = "3675048"
+            session.findById("wnd[1]/tbar[0]/btn[8]").press() 
 
 
         session.findById("wnd[0]/usr/radP_OUNIT").select()
