@@ -247,6 +247,7 @@ def run_etl_zmachk(folder_path):
 
     # ---------- 移動到 processed ----------
     kill_excel()
+    time.sleep(2)
     txt_files = sorted(Path(folder_path).glob("ZMACHK_*.xlsx"))
     for fp in txt_files:
         dest = processed_dir / fp.name
