@@ -187,7 +187,15 @@ def Process_Dry_Zmmidr(df):
     
     df.to_excel(os.path.join(current_inv_fp, "df_Zmmidr_OUn.xlsx"), index=False)
     df.to_excel(os.path.join(history_inv_fp, f"df_Zmmidr_OUn_{datetime.today().date().strftime('%m%d%Y')}.xlsx"), index=False)
-    df.to_excel(r"\\TAWASHARE2\Replenishment_Data\Jimmy\Zmmidr\df_Zmmidr_OUn.xlsx", index=False)
+    try:
+        share_path = r"\\TAWASHARE2\Replenishment_Data\Jimmy\Zmmidr\df_Zmmidr_OUn.xlsx"
+        df.to_excel(share_path, index=False)
+        print(f"✅ 已匯出到 shared folder: {share_path}")
+
+    except OSError as e:
+        print(f"⚠️ cannot upload to shared folder: {share_path}")
+        print(f"reason: {e}")
+    
     print(f"已匯出庫存 Zmmidr 至 {current_inv_fp} 及 {history_inv_fp} 及 共享資料夾")
 
 
