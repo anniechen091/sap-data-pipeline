@@ -166,6 +166,7 @@ def run_etl_zmachk(folder_path):
         # 確保目標資料表存在
         existing_articles = pd.read_sql(text("SELECT Article FROM dbo.dim_Article"), conn)
     existing_set = set(existing_articles['Article'])
+    
     new_rows = batch_df[~batch_df['Article'].isin(existing_set)]
 
     column_types = {
