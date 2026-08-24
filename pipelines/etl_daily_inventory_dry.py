@@ -3,21 +3,17 @@ import shutil
 import tempfile
 import time
 import warnings
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import win32com.client as win32
-import win32clipboard
 from datetime import date
 from ETL_SAP.sap_scripts.sap_utils import *
 from ETL_SAP.sap_scripts.login import sap_login
 
-import urllib
-import urllib.parse
 import urllib.request
-from sqlalchemy import text
-from sqlalchemy import create_engine
 
 from dotenv import load_dotenv
 
@@ -59,6 +55,44 @@ OOCL_DOWNLOAD_WAIT_SECONDS = int(
 GOOGLE_SPREADSHEET_ID = "1P6mdd94PpgomDWrx5MQ-q-88Ps2o9sGdxTWS3v_RJLQ"
 GOOGLE_ZMMIDR_TAB = "Zmmidr"
 GOOGLE_ZMMIDR_STAGING_TAB = "_Zmmidr_ETL_Staging"
+
+# Copy selected Dry Grocery forecast fields into the separate movement report.
+GOOGLE_FORECAST_SOURCE_TAB = "Report"
+GOOGLE_MOVEMENT_SPREADSHEET_ID = "1KXSELCbmaPHpXltvqtAQ9lD9uPJUeNMN4hu0eYc5x_U"
+GOOGLE_MOVEMENT_TAB = "Dry"
+GOOGLE_MOVEMENT_STAGING_TAB = "_Dry_ETL_Staging"
+
+# Source → destination mapping for the Dry movement report. Add or change a
+# mapping here instead of editing the transformation code below.
+MOVEMENT_COLUMN_MAP = [
+    ("Site", "Site"),
+    ("Article", "Article No"),
+    ("Tawa Final Fcst", "Regular Forcast For Reference"),
+    ("Tawa Final Fcst (Include Promo)", "Final Tawa Fsct Mvt (Inlcude Promo)"),
+    ("OUn", "Qty Oun"),
+    ("Walong Final Fcst", "Walong Bacic Fcst"),
+    ("Walong Final Fcst (Include Promo)", "Walong Final Fcst （Include promo)"),
+    ("Lead Time (Wk)", "Lead Time (Week)"),
+    ("Order interval (Wk)", "Order Interval (Week)"),
+    ("Safety Stock (Wk)", "Safety Stock (Week)"),
+    ("Adj Final order QTY", "Final Order Qty"),
+]
+MOVEMENT_FIXED_HEADERS = [
+    "Site",
+    "Article No",
+    "Regular Forcast For Reference",
+    "Final Tawa Fsct Mvt (Inlcude Promo)",
+    "On Order",
+    "Qty Oun",
+    "Walong Bacic Fcst",
+    "Walong Final Fcst （Include promo)",
+    "Lead Time (Week)",
+    "Order Interval (Week)",
+    "Safety Stock (Week)",
+    "Final Order Qty",
+    "Dept",
+    "Article NoDC",
+]
 GOOGLE_SERVICE_ACCOUNT_FILE = Path(
     os.getenv(
         "GOOGLE_SERVICE_ACCOUNT_FILE",
@@ -77,6 +111,19 @@ GOOGLE_AUTHORIZED_USER_FILE = Path(
         str(BASE_DIR / "google_authorized_user.json"),
     )
 )
+
+# -----------------------------------------------------------------------
+# Dry Grocery SAP / output settings
+# -----------------------------------------------------------------------
+
+DEPT = "Dry Grocery"
+SAP_T_CODES = ["ME2M", "ZINV_MCH", "ZMACHK"]
+SAP_SITES = ["9790", "9900"]
+SAP_SELECTION_VARIANT = "WE101"
+SAP_MCH_RANGE = ["10600000", "10699999"]
+SAP_DATE_FROM = "10/01/2022"
+SAP_EXPORT_NAMES = ["SAP_ETA_", "ZINV_MCH_", "ZMACHK_"]
+GOOGLE_FORECAST_SOURCE_GID = "1673826654"
 
 
 def _wait_for_download(download_dir, timeout_seconds):
@@ -516,50 +563,108 @@ def _google_sheet_cell_value(value):
     return value
 
 
-def upload_inventory_to_google_sheet(inventory_df):
-    """
-    Replace the Zmmidr tab with the complete daily inventory output.
+def _column_letter(column_number):
+    """Convert a 1-based column number to an Excel/Sheets column letter."""
+    letters = ""
+    while column_number:
+        column_number, remainder = divmod(column_number - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters
 
-    Data is uploaded to a hidden staging tab first. Only after every chunk has
-    succeeded does one atomic Sheets batch clear and replace the live Zmmidr
-    values. Other tabs, formulas, and formatting remain untouched.
-    """
-    client = _get_google_sheets_client()
-    import gspread
 
-    spreadsheet = client.open_by_key(GOOGLE_SPREADSHEET_ID)
-    target = spreadsheet.worksheet(GOOGLE_ZMMIDR_TAB)
+def _normalize_header(value):
+    """Normalize harmless spacing/case differences in a header."""
+    return " ".join(str(value).split()).casefold()
 
-    expected_columns = [
-        "Article NoDC",
-        "Article",
-        "Site",
-        "Unrestricted-Use Stock",
-        "On order Stock",
-        "Stock in Quality",
-        "ETA",
-        "Walong Status",
-        "Tawa Status",
+
+def _read_columns_by_header(
+    worksheet,
+    required_headers,
+    header_row=2,
+    data_start_row=3,
+):
+    """Read selected worksheet columns by header name, not fixed letters."""
+    positions = {}
+    for column_number, header in enumerate(
+        worksheet.row_values(header_row),
+        start=1,
+    ):
+        normalized = _normalize_header(header)
+        if normalized:
+            positions.setdefault(normalized, []).append(column_number)
+
+    missing = [
+        header
+        for header in required_headers
+        if _normalize_header(header) not in positions
     ]
-    if list(inventory_df.columns) != expected_columns:
+    duplicated = [
+        header
+        for header in required_headers
+        if len(positions.get(_normalize_header(header), [])) > 1
+    ]
+    if missing or duplicated:
         raise ValueError(
-            "Google Sheets upload stopped because the final columns changed. "
-            f"Expected {expected_columns}; received {list(inventory_df.columns)}"
+            f"{worksheet.title} headers are invalid. "
+            f"Missing={missing}; duplicated={duplicated}"
         )
 
-    required_rows = len(inventory_df) + 1
-    required_columns = len(expected_columns)
+    ranges = []
+    resolved = []
+    for header in required_headers:
+        column_number = positions[_normalize_header(header)][0]
+        letter = _column_letter(column_number)
+        ranges.append(
+            f"{letter}{data_start_row}:{letter}{worksheet.row_count}"
+        )
+        resolved.append(f"{header}={letter}")
+
+    print(
+        f"✅ {worksheet.title} columns located by header: "
+        + ", ".join(resolved)
+    )
+    values = worksheet.batch_get(
+        ranges,
+        value_render_option="UNFORMATTED_VALUE",
+    )
+    return dict(zip(required_headers, values))
+
+
+def _column_value(column, row_index):
+    """Safely read one value from a gspread single-column result."""
+    if row_index >= len(column) or not column[row_index]:
+        return ""
+    return column[row_index][0]
+
+
+def _replace_sheet_values_via_staging(
+    spreadsheet,
+    target,
+    staging_tab_name,
+    headers,
+    rows,
+    *,
+    value_input_option="RAW",
+    date_column_indexes=(),
+    progress_label="Google Sheets",
+):
+    """Atomically replace target values through a hidden staging tab."""
+    import gspread
+
+    required_rows = len(rows) + 1
+    required_columns = len(headers)
+    end_column = _column_letter(required_columns)
+    staging_rows = max(required_rows, 2)
 
     try:
-        staging = spreadsheet.worksheet(GOOGLE_ZMMIDR_STAGING_TAB)
+        staging = spreadsheet.worksheet(staging_tab_name)
     except gspread.WorksheetNotFound:
         staging = spreadsheet.add_worksheet(
-            title=GOOGLE_ZMMIDR_STAGING_TAB,
-            rows=max(required_rows, 2),
+            title=staging_tab_name,
+            rows=staging_rows,
             cols=required_columns,
         )
 
-    # Keep the technical staging sheet out of normal user navigation.
     spreadsheet.batch_update(
         {
             "requests": [
@@ -576,39 +681,39 @@ def upload_inventory_to_google_sheet(inventory_df):
         }
     )
 
-    staging.resize(rows=max(required_rows, 2), cols=required_columns)
-    staging.batch_clear([f"A1:I{max(required_rows, 2)}"])
+    staging.resize(rows=staging_rows, cols=required_columns)
+    staging.batch_clear([f"A1:{end_column}{staging_rows}"])
     staging.update(
-        range_name="A1:I1",
-        values=[expected_columns],
-        value_input_option="USER_ENTERED",
+        range_name=f"A1:{end_column}1",
+        values=[headers],
+        value_input_option=value_input_option,
     )
 
     chunk_size = 5000
-    for start_index in range(0, len(inventory_df), chunk_size):
-        end_index = min(start_index + chunk_size, len(inventory_df))
-        chunk_values = [
-            [_google_sheet_cell_value(value) for value in row]
-            for row in inventory_df.iloc[start_index:end_index].itertuples(
-                index=False, name=None
-            )
-        ]
-        start_row = start_index + 2
-        end_row = end_index + 1
+    for start_index in range(0, len(rows), chunk_size):
+        end_index = min(start_index + chunk_size, len(rows))
         staging.update(
-            range_name=f"A{start_row}:I{end_row}",
-            values=chunk_values,
-            value_input_option="USER_ENTERED",
+            range_name=(
+                f"A{start_index + 2}:{end_column}{end_index + 1}"
+            ),
+            values=rows[start_index:end_index],
+            value_input_option=value_input_option,
         )
-        print(f"⏳ Google Sheets staging uploaded: {end_index:,}/{len(inventory_df):,} rows")
+        print(
+            f"⏳ {progress_label} staging uploaded: "
+            f"{end_index:,}/{len(rows):,} rows"
+        )
 
-    if target.row_count < required_rows or target.col_count < required_columns:
+    if (
+        target.row_count < required_rows
+        or target.col_count < required_columns
+    ):
         target.resize(
             rows=max(target.row_count, required_rows),
             cols=max(target.col_count, required_columns),
         )
 
-    target_clear_range = {
+    target_range = {
         "sheetId": target.id,
         "startRowIndex": 0,
         "endRowIndex": target.row_count,
@@ -633,7 +738,7 @@ def upload_inventory_to_google_sheet(inventory_df):
     requests = [
         {
             "updateCells": {
-                "range": target_clear_range,
+                "range": target_range,
                 "fields": "userEnteredValue",
             }
         },
@@ -647,40 +752,210 @@ def upload_inventory_to_google_sheet(inventory_df):
         },
     ]
 
-    if required_rows > 1:
-        requests.append(
-            {
-                "repeatCell": {
-                    "range": {
-                        "sheetId": target.id,
-                        "startRowIndex": 1,
-                        "endRowIndex": required_rows,
-                        "startColumnIndex": 6,
-                        "endColumnIndex": 7,
-                    },
-                    "cell": {
-                        "userEnteredFormat": {
-                            "numberFormat": {
-                                "type": "DATE",
-                                "pattern": "m/d/yyyy",
+    for column_index in date_column_indexes:
+        if required_rows > 1:
+            requests.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": target.id,
+                            "startRowIndex": 1,
+                            "endRowIndex": required_rows,
+                            "startColumnIndex": column_index,
+                            "endColumnIndex": column_index + 1,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {
+                                    "type": "DATE",
+                                    "pattern": "m/d/yyyy",
+                                }
                             }
-                        }
-                    },
-                    "fields": "userEnteredFormat.numberFormat",
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
                 }
-            }
-        )
+            )
 
     spreadsheet.batch_update({"requests": requests})
 
-    verification = target.get("A1:I2")
-    if not verification or verification[0] != expected_columns:
-        raise RuntimeError("Google Sheets verification failed after replacing Zmmidr.")
+    verification = target.get(f"A1:{end_column}2")
+    if not verification or verification[0] != headers:
+        raise RuntimeError(
+            f"Google Sheets verification failed after replacing {target.title}."
+        )
 
+
+def upload_inventory_to_google_sheet(client, inventory_df):
+    """Replace Zmmidr with the complete daily inventory output."""
+    expected_columns = [
+        "Article NoDC",
+        "Article",
+        "Site",
+        "Unrestricted-Use Stock",
+        "On order Stock",
+        "Stock in Quality",
+        "ETA",
+        "Walong Status",
+        "Tawa Status",
+    ]
+    if list(inventory_df.columns) != expected_columns:
+        raise ValueError(
+            "Google Sheets upload stopped because the final columns changed. "
+            f"Expected {expected_columns}; "
+            f"received {list(inventory_df.columns)}"
+        )
+
+    rows = [
+        [_google_sheet_cell_value(value) for value in row]
+        for row in inventory_df.itertuples(index=False, name=None)
+    ]
+
+    spreadsheet = client.open_by_key(GOOGLE_SPREADSHEET_ID)
+    target = spreadsheet.worksheet(GOOGLE_ZMMIDR_TAB)
+    _replace_sheet_values_via_staging(
+        spreadsheet,
+        target,
+        GOOGLE_ZMMIDR_STAGING_TAB,
+        expected_columns,
+        rows,
+        value_input_option="USER_ENTERED",
+        date_column_indexes=(6,),
+        progress_label=GOOGLE_ZMMIDR_TAB,
+    )
     print(
         f"✅ Google Sheet updated: {GOOGLE_ZMMIDR_TAB} "
-        f"({len(inventory_df):,} data rows)"
+        f"({len(rows):,} data rows)"
     )
+
+
+def _identifier_text(value):
+    """Return a clean ID string without a trailing .0."""
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)) and not pd.isna(value):
+        return (
+            str(int(value))
+            if float(value).is_integer()
+            else str(value).strip()
+        )
+    return str(value).strip().removesuffix(".0")
+
+
+def _round_to_whole_number(value):
+    """Round a numeric forecast to a whole number; preserve blanks/errors."""
+    if value is None or value == "" or pd.isna(value):
+        return ""
+    try:
+        return int(
+            Decimal(str(value)).quantize(
+                Decimal("1"),
+                rounding=ROUND_HALF_UP,
+            )
+        )
+    except (InvalidOperation, ValueError):
+        return value
+
+
+def upload_dry_forecast_movement(client):
+    """Copy the filtered Dry forecast into the movement report."""
+    source_book = client.open_by_key(GOOGLE_SPREADSHEET_ID)
+    source = source_book.worksheet(GOOGLE_FORECAST_SOURCE_TAB)
+    target_book = client.open_by_key(GOOGLE_MOVEMENT_SPREADSHEET_ID)
+    target = target_book.worksheet(GOOGLE_MOVEMENT_TAB)
+
+    existing_headers = target.get("A1:N1")
+    if (
+        not existing_headers
+        or existing_headers[0] != MOVEMENT_FIXED_HEADERS
+    ):
+        raise ValueError(
+            "Movement upload stopped because Dry!A1:N1 changed. "
+            f"Expected {MOVEMENT_FIXED_HEADERS}; received "
+            f"{existing_headers[0] if existing_headers else []}"
+        )
+
+    source_headers = [
+        source_header
+        for source_header, _ in MOVEMENT_COLUMN_MAP
+    ] + ["SCA Assort", "Seasonal"]
+    columns = _read_columns_by_header(source, source_headers)
+
+    run_date = date.today()
+    update_header = (
+        f"Updated {run_date.month}.{run_date.day}.{run_date.year}"
+    )
+    output_headers = MOVEMENT_FIXED_HEADERS + [update_header]
+
+    output_rows = []
+    excluded_special = 0
+    excluded_seasonal = 0
+    skipped_missing_id = 0
+    source_row_count = max(
+        (len(column) for column in columns.values()),
+        default=0,
+    )
+
+    for row_index in range(source_row_count):
+        source_row = {
+            header: _column_value(column, row_index)
+            for header, column in columns.items()
+        }
+
+        if str(source_row["SCA Assort"]).strip().upper() == "SPECIAL":
+            excluded_special += 1
+            continue
+        if str(source_row["Seasonal"]).strip().upper() in {"CNY", "GBF"}:
+            excluded_seasonal += 1
+            continue
+
+        site_text = _identifier_text(source_row["Site"])
+        article_text = _identifier_text(source_row["Article"])
+        if not site_text or not article_text:
+            skipped_missing_id += 1
+            continue
+
+        destination_row = {
+            destination_header: source_row[source_header]
+            for source_header, destination_header in MOVEMENT_COLUMN_MAP
+        }
+        for header in (
+            "Walong Bacic Fcst",
+            "Walong Final Fcst （Include promo)",
+        ):
+            destination_row[header] = _round_to_whole_number(
+                destination_row[header]
+            )
+        destination_row.update(
+            {
+                "On Order": "",
+                "Dept": "Dry Grocery",
+                "Article NoDC": site_text + article_text,
+                update_header: "",
+            }
+        )
+        output_rows.append(
+            [destination_row.get(header, "") for header in output_headers]
+        )
+
+    _replace_sheet_values_via_staging(
+        target_book,
+        target,
+        GOOGLE_MOVEMENT_STAGING_TAB,
+        output_headers,
+        output_rows,
+        progress_label=GOOGLE_MOVEMENT_TAB,
+    )
+    print(
+        f"✅ Movement report updated: {GOOGLE_MOVEMENT_TAB} "
+        f"({len(output_rows):,} rows; "
+        f"excluded SPECIAL={excluded_special:,}, "
+        f"CNY/GBF={excluded_seasonal:,}, "
+        f"missing IDs={skipped_missing_id:,})"
+    )
+
 
 def try_press(id_path, retries=3, pause=0.3):
     """Attempt a .press() on a control with small retries."""
@@ -718,13 +993,6 @@ def optional_select(id_path):
         session.findById(id_path).select()
     except Exception:
         pass
-
-def set_clipboard(text):
-    win32clipboard.OpenClipboard()
-    win32clipboard.EmptyClipboard()
-    win32clipboard.SetClipboardText(text)
-    win32clipboard.CloseClipboard()
-
 
 def close_sap_exported_workbooks(workbook_paths, wait_seconds=30):
     """Close only the workbooks exported by this SAP run.
@@ -781,312 +1049,320 @@ def close_sap_exported_workbooks(workbook_paths, wait_seconds=30):
             f"ETL will continue: {details}"
         )
 
-def get_sql_engine():
-    params = urllib.parse.quote_plus(
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-        f"SERVER=TawaDW;"
-        f"DATABASE=TawaDWDB;"
-        f"Trusted_Connection=yes;"
-        f"Connection Timeout=10;"
-        f"Query Timeout=0;"
-    )
-    engine = create_engine("mssql+pyodbc:///?odbc_connect=%s" % params)
-    return engine
+def export_sap_reports(
+    save_dir,
+    date_file,
+    sap_eta_file,
+    zinv_file,
+    zmachk_file,
+):
+    """Export ME2M, ZINV_MCH, and ZMACHK reports from SAP."""
+    global session
 
-dept = 'Dry Grocery'
-today = date.today().strftime("%m.%d.%Y")
-
-
-T_CODE = ["ME2M","ZINV_MCH", "ZMACHK"]
-SITE = ["9790", "9900"]           # EM_WERKS multi-select
-SELECTION_VARIANT = "WE101"         # SELPA-LOW
-MCH = ["10600000", "10699999"]
-DATE_FROM = "10/01/2022"            # mm/dd/yyyy
-DATE_TO   = date.today().strftime("%m/%d/%Y")
-
-DAILY_ROOT = BASE_DIR / "SOH OOD" / "Daily Update"
-DAILY_DIR = DAILY_ROOT / today
-SAVE_DIR = str(DAILY_DIR)
-SAVE_NAME = ["SAP_ETA_","ZINV_MCH_", "ZMACHK_"]
-DATE_FILE = today
-
-SAP_ETA_FILE = DAILY_DIR / f"{SAVE_NAME[0]}{DATE_FILE}.xlsx"
-ZINV_FILE = DAILY_DIR / f"{SAVE_NAME[1]}{DATE_FILE}.xlsx"
-ZMACHK_FILE = DAILY_DIR / f"{SAVE_NAME[2]}{DATE_FILE}.xlsx"
-FINAL_OUTPUT_FILE = DAILY_ROOT / f"{dept} Inventoy Info {today}.xlsx"
-
-DAILY_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# Gmail download must run before the SAP / SQL ETL. A failure keeps the old
-# validated OOCL_ETA.xlsx and allows the remaining daily update to continue.
-download_latest_oocl_eta()
-
-engine = get_sql_engine()
-with engine.connect() as conn:
-    result = conn.execute(text("SELECT GETDATE()"))
-    print("✅ 連線成功，現在時間是：", result.scalar())
-
-
-session = sap_login()
-
-# ------- SAP ETA -------
-
-try_set_text("wnd[0]/tbar[0]/okcd", T_CODE[0])
-session.findById("wnd[0]").sendVKey(0)
-time.sleep(0.5)
-
-session.findById("wnd[0]").maximize
-try_set_text("wnd[0]/usr/ctxtEM_WERKS-LOW", SITE[0])
-try_set_text("wnd[0]/usr/ctxtEM_WERKS-HIGH", SITE[1])
-try_set_text("wnd[0]/usr/ctxtS_MATKL-LOW", MCH[0])
-try_set_text("wnd[0]/usr/ctxtS_MATKL-HIGH", MCH[1])
-try_set_text("wnd[0]/usr/ctxtSELPA-LOW", SELECTION_VARIANT)
-try_set_text("wnd[0]/usr/ctxtS_BEDAT-LOW", DATE_FROM)
-try_set_text("wnd[0]/usr/ctxtS_BEDAT-HIGH", DATE_TO)
-try_press("wnd[0]/tbar[1]/btn[8]")
-try_press("wnd[0]/tbar[1]/btn[23]")
-try_press("wnd[0]/tbar[1]/btn[43]")
-try_set_text("wnd[1]/usr/ctxtDY_PATH", SAVE_DIR)
-try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAVE_NAME[0]+DATE_FILE+".xlsx"))
-session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
-# try_press("wnd[1]/tbar[0]/btn[0]")
-try_press("wnd[1]/tbar[0]/btn[11]")
-
-# ------- ZINV -------
-
-try_press("wnd[0]/tbar[0]/btn[15]")
-try_press("wnd[0]/tbar[0]/btn[15]")
-try_set_text("wnd[0]/tbar[0]/okcd", T_CODE[1])
-session.findById("wnd[0]").sendVKey(0)
-time.sleep(0.5)
-
-session.findById("wnd[0]").maximize
-try_set_text("wnd[0]/usr/ctxtSBWKEY-LOW", SITE[0])
-try_set_text("wnd[0]/usr/ctxtSBWKEY-HIGH", SITE[1])
-try_set_text("wnd[0]/usr/ctxtSMATKL-LOW", MCH[0])
-try_set_text("wnd[0]/usr/ctxtSMATKL-HIGH", MCH[1])
-optional_select("wnd[0]/usr/radPLBKUM1")
-optional_select("wnd[0]/usr/radP_OUNIT")
-try_press("wnd[0]/tbar[1]/btn[8]")
-optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
-try_set_text("wnd[1]/usr/ctxtDY_PATH", SAVE_DIR)
-try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAVE_NAME[1]+DATE_FILE+".xlsx"))
-session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
-# try_press("wnd[1]/tbar[0]/btn[0]")
-try_press("wnd[1]/tbar[0]/btn[11]")
-
-
-
-# ------- ZMACHK -------
-
-# Dry Grocery Report tab. Google Sheets UI filters do not change this CSV
-# export, so every underlying Article is included.
-sheet_id = GOOGLE_SPREADSHEET_ID
-gid = "1673826654"
-csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-
-review_dry = pd.read_csv(csv_url, header=1)
-review_articles = review_dry[['Article']].dropna().drop_duplicates()
-
-
-try_press("wnd[0]/tbar[0]/btn[15]")
-try_press("wnd[0]/tbar[0]/btn[15]")
-try_set_text("wnd[0]/tbar[0]/okcd", T_CODE[2])
-session.findById("wnd[0]").sendVKey(0)
-time.sleep(0.5)
-
-review_articles.to_clipboard(index=False, header=False)
-
-session.findById("wnd[0]").maximize
-try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
-try_press("wnd[1]/tbar[0]/btn[24]")
-try_press("wnd[1]/tbar[0]/btn[8]")
-try_press("wnd[0]/tbar[1]/btn[8]")
-optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
-try_set_text("wnd[1]/usr/ctxtDY_PATH", SAVE_DIR)
-review_articles.to_clipboard(index=False, header=False)
-try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAVE_NAME[2]+DATE_FILE+".xlsx"))
-session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 17
-# try_press("wnd[1]/tbar[0]/btn[0]")
-try_press("wnd[1]/tbar[0]/btn[11]")
-
-# SAP automatically opens the three exported files in Excel. Close only these
-# exact workbooks before pandas reads them; leave any unrelated workbooks open.
-close_sap_exported_workbooks([SAP_ETA_FILE, ZINV_FILE, ZMACHK_FILE])
-
-# ------- combine -------
-
-oocl_df = pd.read_excel(OOCL_ETA_PATH, skiprows=4, skipfooter=1)
-oocl_df['DC ETA'] = np.where(
-    oocl_df['Out-Gate(Actual)'].isna(),
-    oocl_df['FND/ETA'] + pd.Timedelta(days=10),
-    oocl_df['Out-Gate(Actual)'] + pd.Timedelta(days=5)
-)
-
-mask = oocl_df['SAP PO#'].notna()
-
-oocl_df.loc[mask, 'SAP PO#'] = (
-    oocl_df.loc[mask, 'SAP PO#']
-        .astype('Int64')
-        .astype(str)
-)
-oocl_df['SAP PO#'] = oocl_df['SAP PO#'].replace('<NA>', pd.NA)
-
-oocl_clean = oocl_df[['SAP PO#', 'DC ETA']].drop_duplicates('SAP PO#')
-
-sap = pd.read_excel(SAP_ETA_FILE)
-
-# --- Type alignment ---
-sap['Purchasing Document'] = sap['Purchasing Document'].astype(str).str.strip()
-oocl_clean['SAP PO#'] = oocl_clean['SAP PO#'].astype(str).str.strip()
-
-# --- Ensure ETA is datetime ---
-oocl_clean['DC ETA'] = pd.to_datetime(oocl_clean['DC ETA'], errors='coerce')
-sap['Stat.-Rel. Del. Date'] = pd.to_datetime(sap['Stat.-Rel. Del. Date'], errors='coerce')
-
-# --- Apply OOCL ETA to 89 POs via PO# match ---
-eta_map = oocl_clean.set_index('SAP PO#')['DC ETA']
-sap['Stat.-Rel. Del. Date'] = sap['Purchasing Document'].map(eta_map).fillna(sap['Stat.-Rel. Del. Date'])
-
-# --- Halve scheduled quantity for specific articles ---
-mask = sap['Article'].isin([1661247, 2014080, 3662123])
-sap.loc[mask, 'Scheduled Quantity'] = sap.loc[mask, 'Scheduled Quantity'] / 2
-
-# -----------------------------------------------------------------------
-# WALONG (3999992) / TAWA (3999998) 98-PO vs 89-PO handling
-#
-# For 9900 import orders, SAP creates two linked POs:
-#   • 89XXXXXXXX  → ordering/shipment PO (Site 9890, Storage W900) — OOCL knows this PO
-#   • 98XXXXXXXX  → receiving PO        (Site 9900, Storage 0001)  — OOCL does NOT know this PO
-#
-# Strategy:
-#   1. Keep 89 POs (9890/W900) — they carry the OOCL ETA and are the source of truth.
-#      Convert them to Site 9900 so downstream sees the right site.
-#   2. Drop 98 POs that have a matching 89 PO (same Article + Document Date) — duplicate.
-#   3. Keep 98 POs that have NO matching 89 PO (89 already received/gone, orphaned 98 PO).
-#      Set their ETA to today + 3 days as a safe placeholder.
-# -----------------------------------------------------------------------
-
-is_walong_98 = (
-    sap['Vendor/supplying site'].str.strip().str.startswith('3999992') |
-    sap['Vendor/supplying site'].str.strip().str.startswith('3999998')
-)
-
-# Build a set of (Article, Document Date) keys from existing 89/W900 POs
-po89_keys = set(
-    zip(
-        sap.loc[(sap['Storage Location'] == 'W900') & (sap['Site'] == 9890), 'Article'],
-        #sap.loc[(sap['Storage Location'] == 'W900') & (sap['Site'] == 9890), 'Document Date'],
-        sap.loc[(sap['Storage Location'] == 'W900') & (sap['Site'] == 9890), 'Scheduled Quantity'],
-    )
-)
-
-# Mark each Walong/Tawa 98 PO as paired or orphaned
-def has_89_pair(row):
-    #return (row['Article'], row['Document Date']) in po89_keys
-    return (row['Article'], row['Scheduled Quantity']) in po89_keys
-
-#Which one?
-walong_98_mask = is_walong_98 & sap['Purchasing Document'].str.startswith('98')
-
-sap_walong_98 = sap[walong_98_mask].copy()
-is_paired = sap_walong_98.apply(has_89_pair, axis=1)
-
-# Drop paired 98 POs (the 89 PO already covers them)
-paired_98_idx = sap_walong_98[is_paired].index
-sap = sap.drop(index=paired_98_idx)
-
-# Orphaned 98 POs: set ETA to today + 3 business days as placeholder
-orphan_98_idx = sap_walong_98[~is_paired].index
-today_ts = pd.Timestamp.today().normalize()
-sap.loc[orphan_98_idx, 'Stat.-Rel. Del. Date'] = today_ts + pd.Timedelta(days=3)
-
-# Convert remaining 89 POs (9890/W900) → Site 9900 for downstream processing
-sap.loc[(sap['Site'] == 9890) & (sap['Storage Location'] == 'W900'), 'Site'] = 9900
-
-# -----------------------------------------------------------------------
-
-# --- Other site remapping ---
-sap.loc[(sap['Site'] == 9790) & (sap['Storage Location'] == '0002'), 'Site'] = 9793
-
-# --- Date window filter ---
-sap = sap[
-    (sap['Stat.-Rel. Del. Date'] > today_ts - pd.Timedelta(days=75)) &
-    (sap['Stat.-Rel. Del. Date'] < today_ts + pd.Timedelta(days=365))
-]
-
-# --- Remove zero/trivial quantity rows ---
-sap = sap[sap['Scheduled Quantity'] > 1]
-
-eta = sap[['Article', 'Site', 'Stat.-Rel. Del. Date']].groupby(['Article', 'Site']).min().rename(columns = {'Stat.-Rel. Del. Date':'ETA'}).reset_index()
-
-ood = sap[['Article', 'Site', 'Scheduled Quantity']].groupby(['Article', 'Site']).sum().rename(columns = {'Scheduled Quantity':'On order Stock'}).reset_index()
-
-zinv = pd.read_excel(ZINV_FILE)
-
-zinv = zinv[['Article No', 'Site', 'Available Inventory', 'Stock in Quality']].rename(columns = {'Article No':'Article',
-                                                                                                  'Available Inventory':'Unrestricted-Use Stock'})
-
-zmachk = pd.read_excel(ZMACHK_FILE)
-
-
-zmachk_9891 = zmachk.copy()
-zmachk_9891['Site'] = 9891
-zmachk_9900 = zmachk.copy()
-zmachk_9900['Site'] = 9900
-zmachk_9790 = zmachk.copy()
-zmachk_9790['Site'] = 9790
-zmachk_9793 = zmachk.copy()
-zmachk_9793['Site'] = 9793
-zmachk_new = pd.concat([zmachk_9891, zmachk_9900, zmachk_9790, zmachk_9793], ignore_index = True)
-
-
-conditions = [zmachk_new['Site'] == 9891, zmachk_new['Site'] == 9900, zmachk_new['Site'] == 9790,  zmachk_new['Site'] == 9793]
-choices_walong = [zmachk_new['Status WS W'], "", zmachk_new['Status WS E'], zmachk_new['Status WS E']]
-choices_tawa = [zmachk_new['Status SCA'], zmachk_new['Status NCA'], zmachk_new['Status EC'], ""]
-zmachk_new['Walong Status'] = np.select(conditions, choices_walong, default = "")
-zmachk_new['Tawa Status'] = np.select(conditions, choices_tawa, default = "")
-
-zmachk_new = zmachk_new[['Site', 'Article', 'Walong Status', 'Tawa Status']]
-
-for df in [zmachk_new, zinv, ood, eta]:
-    df['Site'] = df['Site'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-    df['Article'] = df['Article'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-
+    date_to = date.today().strftime("%m/%d/%Y")
+    session = sap_login()
     
-inv_final = (
-    zmachk_new
-    .merge(zinv, on=['Site', 'Article'], how='left')
-    .merge(ood, on=['Site', 'Article'], how='left')
-    .merge(eta, on=['Site', 'Article'], how='left')
-)
+    # ------- SAP ETA -------
+    
+    try_set_text("wnd[0]/tbar[0]/okcd", SAP_T_CODES[0])
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(0.5)
+    
+    session.findById("wnd[0]").maximize
+    try_set_text("wnd[0]/usr/ctxtEM_WERKS-LOW", SAP_SITES[0])
+    try_set_text("wnd[0]/usr/ctxtEM_WERKS-HIGH", SAP_SITES[1])
+    try_set_text("wnd[0]/usr/ctxtS_MATKL-LOW", SAP_MCH_RANGE[0])
+    try_set_text("wnd[0]/usr/ctxtS_MATKL-HIGH", SAP_MCH_RANGE[1])
+    try_set_text("wnd[0]/usr/ctxtSELPA-LOW", SAP_SELECTION_VARIANT)
+    try_set_text("wnd[0]/usr/ctxtS_BEDAT-LOW", SAP_DATE_FROM)
+    try_set_text("wnd[0]/usr/ctxtS_BEDAT-HIGH", date_to)
+    try_press("wnd[0]/tbar[1]/btn[8]")
+    try_press("wnd[0]/tbar[1]/btn[23]")
+    try_press("wnd[0]/tbar[1]/btn[43]")
+    try_set_text("wnd[1]/usr/ctxtDY_PATH", save_dir)
+    try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAP_EXPORT_NAMES[0]+date_file+".xlsx"))
+    session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
+    # try_press("wnd[1]/tbar[0]/btn[0]")
+    try_press("wnd[1]/tbar[0]/btn[11]")
+    
+    # ------- ZINV -------
+    
+    try_press("wnd[0]/tbar[0]/btn[15]")
+    try_press("wnd[0]/tbar[0]/btn[15]")
+    try_set_text("wnd[0]/tbar[0]/okcd", SAP_T_CODES[1])
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(0.5)
+    
+    session.findById("wnd[0]").maximize
+    try_set_text("wnd[0]/usr/ctxtSBWKEY-LOW", SAP_SITES[0])
+    try_set_text("wnd[0]/usr/ctxtSBWKEY-HIGH", SAP_SITES[1])
+    try_set_text("wnd[0]/usr/ctxtSMATKL-LOW", SAP_MCH_RANGE[0])
+    try_set_text("wnd[0]/usr/ctxtSMATKL-HIGH", SAP_MCH_RANGE[1])
+    optional_select("wnd[0]/usr/radPLBKUM1")
+    optional_select("wnd[0]/usr/radP_OUNIT")
+    try_press("wnd[0]/tbar[1]/btn[8]")
+    optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
+    try_set_text("wnd[1]/usr/ctxtDY_PATH", save_dir)
+    try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAP_EXPORT_NAMES[1]+date_file+".xlsx"))
+    session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
+    # try_press("wnd[1]/tbar[0]/btn[0]")
+    try_press("wnd[1]/tbar[0]/btn[11]")
+    
+    
+    
+    # ------- ZMACHK -------
+    
+    # Dry Grocery Report tab. Google Sheets UI filters do not change this CSV
+    # export, so every underlying Article is included.
+    sheet_id = GOOGLE_SPREADSHEET_ID
+    gid = GOOGLE_FORECAST_SOURCE_GID
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
-inv_final[['Unrestricted-Use Stock', 'Stock in Quality', 'On order Stock']] = (
-    inv_final[['Unrestricted-Use Stock', 'Stock in Quality', 'On order Stock']].fillna(0)
-)
+    review_dry = pd.read_csv(csv_url, header=1)
+    review_articles = review_dry[['Article']].dropna().drop_duplicates()
+    
+    
+    try_press("wnd[0]/tbar[0]/btn[15]")
+    try_press("wnd[0]/tbar[0]/btn[15]")
+    try_set_text("wnd[0]/tbar[0]/okcd", SAP_T_CODES[2])
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(0.5)
+    
+    review_articles.to_clipboard(index=False, header=False)
+    
+    session.findById("wnd[0]").maximize
+    try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
+    try_press("wnd[1]/tbar[0]/btn[24]")
+    try_press("wnd[1]/tbar[0]/btn[8]")
+    try_press("wnd[0]/tbar[1]/btn[8]")
+    optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
+    try_set_text("wnd[1]/usr/ctxtDY_PATH", save_dir)
+    review_articles.to_clipboard(index=False, header=False)
+    try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAP_EXPORT_NAMES[2]+date_file+".xlsx"))
+    session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 17
+    # try_press("wnd[1]/tbar[0]/btn[0]")
+    try_press("wnd[1]/tbar[0]/btn[11]")
+    
+    # SAP automatically opens the three exported files in Excel. Close only these
+    # exact workbooks before pandas reads them; leave any unrelated workbooks open.
+    close_sap_exported_workbooks([sap_eta_file, zinv_file, zmachk_file])
 
-inv_final['ETA'] = pd.to_datetime(inv_final['ETA'], errors='coerce').dt.normalize()
 
-inv_final['Article NoDC'] = inv_final['Site'].astype(str) + inv_final['Article'].astype(str)
-inv_final = inv_final[['Article NoDC', 'Article', 'Site', 'Unrestricted-Use Stock', 'On order Stock', 'Stock in Quality', 'ETA', 'Walong Status', 'Tawa Status']]
+def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
+    """Combine OOCL ETA and the three SAP exports into the final dataset."""
+    # ------- combine -------
+    
+    oocl_df = pd.read_excel(OOCL_ETA_PATH, skiprows=4, skipfooter=1)
+    oocl_df['DC ETA'] = np.where(
+        oocl_df['Out-Gate(Actual)'].isna(),
+        oocl_df['FND/ETA'] + pd.Timedelta(days=10),
+        oocl_df['Out-Gate(Actual)'] + pd.Timedelta(days=5)
+    )
+    
+    mask = oocl_df['SAP PO#'].notna()
+    
+    oocl_df.loc[mask, 'SAP PO#'] = (
+        oocl_df.loc[mask, 'SAP PO#']
+            .astype('Int64')
+            .astype(str)
+    )
+    oocl_df['SAP PO#'] = oocl_df['SAP PO#'].replace('<NA>', pd.NA)
+    
+    oocl_clean = oocl_df[['SAP PO#', 'DC ETA']].drop_duplicates('SAP PO#')
+    
+    sap = pd.read_excel(sap_eta_file)
+    
+    # --- Type alignment ---
+    sap['Purchasing Document'] = sap['Purchasing Document'].astype(str).str.strip()
+    oocl_clean['SAP PO#'] = oocl_clean['SAP PO#'].astype(str).str.strip()
+    
+    # --- Ensure ETA is datetime ---
+    oocl_clean['DC ETA'] = pd.to_datetime(oocl_clean['DC ETA'], errors='coerce')
+    sap['Stat.-Rel. Del. Date'] = pd.to_datetime(sap['Stat.-Rel. Del. Date'], errors='coerce')
+    
+    # --- Apply OOCL ETA to 89 POs via PO# match ---
+    eta_map = oocl_clean.set_index('SAP PO#')['DC ETA']
+    sap['Stat.-Rel. Del. Date'] = sap['Purchasing Document'].map(eta_map).fillna(sap['Stat.-Rel. Del. Date'])
+    
+    # --- Halve scheduled quantity for specific articles ---
+    mask = sap['Article'].isin([1661247, 2014080, 3662123])
+    sap.loc[mask, 'Scheduled Quantity'] = sap.loc[mask, 'Scheduled Quantity'] / 2
+    
+    # -----------------------------------------------------------------------
+    # WALONG (3999992) / TAWA (3999998) 98-PO vs 89-PO handling
+    #
+    # For 9900 import orders, SAP creates two linked POs:
+    #   • 89XXXXXXXX  → ordering/shipment PO (Site 9890, Storage W900) — OOCL knows this PO
+    #   • 98XXXXXXXX  → receiving PO        (Site 9900, Storage 0001)  — OOCL does NOT know this PO
+    #
+    # Strategy:
+    #   1. Keep 89 POs (9890/W900) — they carry the OOCL ETA and are the source of truth.
+    #      Convert them to Site 9900 so downstream sees the right site.
+    #   2. Drop 98 POs that have a matching 89 PO (same Article + Document Date) — duplicate.
+    #   3. Keep 98 POs that have NO matching 89 PO (89 already received/gone, orphaned 98 PO).
+    #      Set their ETA to today + 3 days as a safe placeholder.
+    # -----------------------------------------------------------------------
+    
+    is_walong_98 = (
+        sap['Vendor/supplying site'].str.strip().str.startswith('3999992') |
+        sap['Vendor/supplying site'].str.strip().str.startswith('3999998')
+    )
+    
+    # Build a set of (Article, Document Date) keys from existing 89/W900 POs
+    po89_keys = set(
+        zip(
+            sap.loc[(sap['Storage Location'] == 'W900') & (sap['Site'] == 9890), 'Article'],
+            #sap.loc[(sap['Storage Location'] == 'W900') & (sap['Site'] == 9890), 'Document Date'],
+            sap.loc[(sap['Storage Location'] == 'W900') & (sap['Site'] == 9890), 'Scheduled Quantity'],
+        )
+    )
+    
+    # Mark each Walong/Tawa 98 PO as paired or orphaned
+    def has_89_pair(row):
+        #return (row['Article'], row['Document Date']) in po89_keys
+        return (row['Article'], row['Scheduled Quantity']) in po89_keys
+    
+    #Which one?
+    walong_98_mask = is_walong_98 & sap['Purchasing Document'].str.startswith('98')
+    
+    sap_walong_98 = sap[walong_98_mask].copy()
+    is_paired = sap_walong_98.apply(has_89_pair, axis=1)
+    
+    # Drop paired 98 POs (the 89 PO already covers them)
+    paired_98_idx = sap_walong_98[is_paired].index
+    sap = sap.drop(index=paired_98_idx)
+    
+    # Orphaned 98 POs: set ETA to today + 3 business days as placeholder
+    orphan_98_idx = sap_walong_98[~is_paired].index
+    today_ts = pd.Timestamp.today().normalize()
+    sap.loc[orphan_98_idx, 'Stat.-Rel. Del. Date'] = today_ts + pd.Timedelta(days=3)
+    
+    # Convert remaining 89 POs (9890/W900) → Site 9900 for downstream processing
+    sap.loc[(sap['Site'] == 9890) & (sap['Storage Location'] == 'W900'), 'Site'] = 9900
+    
+    # -----------------------------------------------------------------------
+    
+    # --- Other site remapping ---
+    sap.loc[(sap['Site'] == 9790) & (sap['Storage Location'] == '0002'), 'Site'] = 9793
+    
+    # --- Date window filter ---
+    sap = sap[
+        (sap['Stat.-Rel. Del. Date'] > today_ts - pd.Timedelta(days=75)) &
+        (sap['Stat.-Rel. Del. Date'] < today_ts + pd.Timedelta(days=365))
+    ]
+    
+    # --- Remove zero/trivial quantity rows ---
+    sap = sap[sap['Scheduled Quantity'] > 1]
+    
+    eta = sap[['Article', 'Site', 'Stat.-Rel. Del. Date']].groupby(['Article', 'Site']).min().rename(columns = {'Stat.-Rel. Del. Date':'ETA'}).reset_index()
+    
+    ood = sap[['Article', 'Site', 'Scheduled Quantity']].groupby(['Article', 'Site']).sum().rename(columns = {'Scheduled Quantity':'On order Stock'}).reset_index()
+    
+    zinv = pd.read_excel(zinv_file)
+    
+    zinv = zinv[['Article No', 'Site', 'Available Inventory', 'Stock in Quality']].rename(columns = {'Article No':'Article',
+                                                                                                      'Available Inventory':'Unrestricted-Use Stock'})
+    
+    zmachk = pd.read_excel(zmachk_file)
+    
+    
+    zmachk_9891 = zmachk.copy()
+    zmachk_9891['Site'] = 9891
+    zmachk_9900 = zmachk.copy()
+    zmachk_9900['Site'] = 9900
+    zmachk_9790 = zmachk.copy()
+    zmachk_9790['Site'] = 9790
+    zmachk_9793 = zmachk.copy()
+    zmachk_9793['Site'] = 9793
+    zmachk_new = pd.concat([zmachk_9891, zmachk_9900, zmachk_9790, zmachk_9793], ignore_index = True)
+    
+    
+    conditions = [zmachk_new['Site'] == 9891, zmachk_new['Site'] == 9900, zmachk_new['Site'] == 9790,  zmachk_new['Site'] == 9793]
+    choices_walong = [zmachk_new['Status WS W'], "", zmachk_new['Status WS E'], zmachk_new['Status WS E']]
+    choices_tawa = [zmachk_new['Status SCA'], zmachk_new['Status NCA'], zmachk_new['Status EC'], ""]
+    zmachk_new['Walong Status'] = np.select(conditions, choices_walong, default = "")
+    zmachk_new['Tawa Status'] = np.select(conditions, choices_tawa, default = "")
+    
+    zmachk_new = zmachk_new[['Site', 'Article', 'Walong Status', 'Tawa Status']]
+    
+    for df in [zmachk_new, zinv, ood, eta]:
+        df['Site'] = df['Site'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        df['Article'] = df['Article'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    
+        
+    inv_final = (
+        zmachk_new
+        .merge(zinv, on=['Site', 'Article'], how='left')
+        .merge(ood, on=['Site', 'Article'], how='left')
+        .merge(eta, on=['Site', 'Article'], how='left')
+    )
 
-with pd.ExcelWriter(
-    FINAL_OUTPUT_FILE,
-    engine="openpyxl",
-    date_format="m/d/yyyy",
-    datetime_format="m/d/yyyy",
-) as writer:
-    inv_final.to_excel(writer, index=False, sheet_name="Sheet1")
-    output_sheet = writer.sheets["Sheet1"]
-    for row in output_sheet.iter_rows(
-        min_row=2,
-        max_row=output_sheet.max_row,
-        min_col=7,
-        max_col=7,
-    ):
-        row[0].number_format = "m/d/yyyy"
+    inv_final[['Unrestricted-Use Stock', 'Stock in Quality', 'On order Stock']] = (
+        inv_final[['Unrestricted-Use Stock', 'Stock in Quality', 'On order Stock']].fillna(0)
+    )
+    
+    inv_final['ETA'] = pd.to_datetime(inv_final['ETA'], errors='coerce').dt.normalize()
+    
+    inv_final['Article NoDC'] = inv_final['Site'].astype(str) + inv_final['Article'].astype(str)
+    inv_final = inv_final[['Article NoDC', 'Article', 'Site', 'Unrestricted-Use Stock', 'On order Stock', 'Stock in Quality', 'ETA', 'Walong Status', 'Tawa Status']]
 
-print(f"✅ Daily inventory file created: {FINAL_OUTPUT_FILE}")
+    return inv_final
 
-upload_inventory_to_google_sheet(inv_final)
+
+def save_inventory_output(inventory_df, output_file):
+    """Save the daily Excel output with an ETA date-only format."""
+    with pd.ExcelWriter(
+        output_file,
+        engine="openpyxl",
+        date_format="m/d/yyyy",
+        datetime_format="m/d/yyyy",
+    ) as writer:
+        inventory_df.to_excel(writer, index=False, sheet_name="Sheet1")
+        output_sheet = writer.sheets["Sheet1"]
+        for row in output_sheet.iter_rows(
+            min_row=2,
+            max_row=output_sheet.max_row,
+            min_col=7,
+            max_col=7,
+        ):
+            row[0].number_format = "m/d/yyyy"
+
+    print(f"✅ Daily inventory file created: {output_file}")
+
+
+def main():
+    """Run the complete Dry Grocery daily inventory automation."""
+    run_date = date.today().strftime("%m.%d.%Y")
+    daily_root = BASE_DIR / "SOH OOD" / "Daily Update"
+    daily_dir = daily_root / run_date
+    daily_dir.mkdir(parents=True, exist_ok=True)
+
+    sap_eta_file = daily_dir / f"{SAP_EXPORT_NAMES[0]}{run_date}.xlsx"
+    zinv_file = daily_dir / f"{SAP_EXPORT_NAMES[1]}{run_date}.xlsx"
+    zmachk_file = daily_dir / f"{SAP_EXPORT_NAMES[2]}{run_date}.xlsx"
+    output_file = daily_root / f"{DEPT} Inventoy Info {run_date}.xlsx"
+
+    # Keep the previous validated OOCL file when today's download fails.
+    download_latest_oocl_eta()
+
+    export_sap_reports(
+        str(daily_dir),
+        run_date,
+        sap_eta_file,
+        zinv_file,
+        zmachk_file,
+    )
+    inventory_df = build_inventory_output(
+        sap_eta_file,
+        zinv_file,
+        zmachk_file,
+    )
+    save_inventory_output(inventory_df, output_file)
+
+    google_client = _get_google_sheets_client()
+    upload_inventory_to_google_sheet(google_client, inventory_df)
+    upload_dry_forecast_movement(google_client)
+
+
+if __name__ == "__main__":
+    main()
