@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pythoncom
 import win32com.client as win32
 from datetime import date
 from ETL_SAP.sap_scripts.sap_utils import *
@@ -126,6 +125,7 @@ SAP_SELECTION_VARIANT = "WE101"
 SAP_MCH_RANGE = ["10500000", "10699999"]
 SAP_DATE_FROM = "10/01/2022"
 SAP_EXPORT_NAMES = ["SAP_ETA_", "ZINV_MCH_", "ZMACHK_"]
+GOOGLE_FORECAST_SOURCE_GIDS = ("1718908642", "1673826654")
 
 
 def _wait_for_download(download_dir, timeout_seconds):
@@ -548,76 +548,6 @@ def _get_google_sheets_client():
         "Google Sheets credentials were not found. Add either "
         f"{GOOGLE_SERVICE_ACCOUNT_FILE} or {GOOGLE_OAUTH_CLIENT_FILE}."
     )
-
-
-def load_review_articles_from_google_api(
-    client,
-    retries=5,
-    pause_seconds=5,
-):
-    """Read the latest Dry and NonFood Article lists via authenticated API.
-
-    Header row 2 is inspected by name, so inserting or moving columns does not
-    break the Article lookup. Google Sheets UI filters do not remove underlying
-    values returned by the API.
-    """
-    last_error = None
-
-    for attempt in range(1, retries + 1):
-        try:
-            spreadsheet = client.open_by_key(GOOGLE_SPREADSHEET_ID)
-            article_values = []
-            tab_counts = []
-
-            for tab_name in GOOGLE_FORECAST_SOURCE_TABS:
-                worksheet = spreadsheet.worksheet(tab_name)
-                headers = [
-                    str(value).strip()
-                    for value in worksheet.row_values(2)
-                ]
-                if "Article" not in headers:
-                    raise KeyError(
-                        f"{tab_name}!2:2 does not contain an Article header."
-                    )
-
-                article_column = headers.index("Article") + 1
-                tab_articles = [
-                    str(value).strip()
-                    for value in worksheet.col_values(article_column)[2:]
-                    if str(value).strip()
-                ]
-                article_values.extend(tab_articles)
-                tab_counts.append(f"{tab_name}={len(tab_articles):,}")
-
-            review_articles = (
-                pd.DataFrame({"Article": article_values})
-                .dropna()
-                .drop_duplicates()
-            )
-            if review_articles.empty:
-                raise ValueError(
-                    "Dry and NonFood returned no Article values."
-                )
-
-            print(
-                "✅ Article list read through Google Sheets API: "
-                + ", ".join(tab_counts)
-                + f"; unique={len(review_articles):,}"
-            )
-            return review_articles
-
-        except Exception as exc:
-            last_error = exc
-            if attempt < retries:
-                print(
-                    "⚠️ Google Sheets Article read failed; retrying "
-                    f"({attempt}/{retries}): {exc}"
-                )
-                time.sleep(pause_seconds)
-
-    raise RuntimeError(
-        f"Google Sheets Article read failed after {retries} attempts."
-    ) from last_error
 
 
 def _google_sheet_cell_value(value):
@@ -1136,131 +1066,40 @@ def optional_select(id_path):
     except Exception:
         pass
 
+def close_sap_exported_workbooks(workbook_paths, wait_seconds=30):
+    """Close only the workbooks exported by this SAP run.
 
-def write_articles_to_sap_upload_file(article_frame, file_path):
-    """Write one Article per line for SAP Multiple Selection file upload."""
-    values = [
-        _identifier_text(value)
-        for value in article_frame.iloc[:, 0]
-        if not pd.isna(value)
-    ]
-    values = [value for value in values if value]
-    if not values:
-        raise ValueError("No Article values were available for the SAP file upload.")
-
-    file_path = Path(file_path).resolve()
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    with file_path.open("w", encoding="utf-8", newline="\r\n") as handle:
-        handle.write("\n".join(values) + "\n")
-    print(
-        f"✅ SAP Article upload file created: {file_path} "
-        f"({len(values):,} Articles)"
-    )
-    return file_path
-
-
-def upload_articles_to_sap(article_frame, file_path):
-    """Load Article values into SAP without using the Windows clipboard."""
-    file_path = write_articles_to_sap_upload_file(article_frame, file_path)
-
-    session.findById("wnd[0]").maximize
-    try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
-    try_press("wnd[1]/tbar[0]/btn[23]")  # Upload from file
-    try_set_text("wnd[2]/usr/ctxtDY_PATH", str(file_path.parent))
-    try_set_text("wnd[2]/usr/ctxtDY_FILENAME", file_path.name)
-    try_press("wnd[2]/tbar[0]/btn[0]")
-    try_press("wnd[1]/tbar[0]/btn[8]")
-    print(f"✅ Article list uploaded to SAP from file: {file_path.name}")
-
-def close_sap_exported_workbooks(
-    workbook_paths,
-    wait_seconds=30,
-    settle_seconds=2,
-):
-    """Close SAP-opened workbooks without opening them a second time.
-
-    The old ``GetObject(file_path)`` approach could race with SAP while Excel
-    was still opening the export and trigger a second Excel instance plus a
-    "File in Use" dialog. This version only inspects objects that are already
-    registered as running and closes an exact full-path match.
+    SAP may automatically open each exported workbook in Excel. Bind to each
+    exact workbook path, close it without saving, and quit Excel only when that
+    Excel instance has no other workbooks open. A close failure is non-fatal so
+    the remaining ETL can continue.
     """
     pending = {Path(path).resolve() for path in workbook_paths}
     closed_names = []
     last_errors = {}
     deadline = time.time() + wait_seconds
 
-    print(
-        "⏳ Waiting for SAP-exported Excel workbook(s) to open: "
-        + ", ".join(sorted(path.name for path in pending))
-    )
-    time.sleep(settle_seconds)
-
-    def close_if_target(workbook):
-        try:
-            full_name = Path(str(workbook.FullName)).resolve()
-        except Exception:
-            return
-
-        if full_name not in pending:
-            return
-
-        try:
-            excel_app = workbook.Application
-            previous_display_alerts = excel_app.DisplayAlerts
-            excel_app.DisplayAlerts = False
-            workbook.Close(SaveChanges=False)
-
-            pending.remove(full_name)
-            closed_names.append(full_name.name)
-
-            if excel_app.Workbooks.Count == 0:
-                excel_app.Quit()
-            else:
-                # Preserve the user's existing Excel session and settings.
-                excel_app.DisplayAlerts = previous_display_alerts
-        except Exception as exc:
-            last_errors[full_name] = exc
-
     while pending and time.time() < deadline:
-        # SAP and Excel share the COM apartment already initialized by the
-        # running automation. Do not call CoUninitialize here, because that
-        # disconnects the existing SAP session object.
-        # First inspect the Excel application currently registered as active.
-        # Merely attaching to the application cannot reopen a workbook.
-        try:
-            excel_app = win32.GetActiveObject("Excel.Application")
-            for index in range(int(excel_app.Workbooks.Count), 0, -1):
-                close_if_target(excel_app.Workbooks.Item(index))
-        except Exception:
-            pass
+        for workbook_path in list(pending):
+            if not workbook_path.exists():
+                continue
 
-        # Multiple Excel instances can exist. Excel registers open workbooks
-        # in the Running Object Table, so inspect those existing objects too.
-        # ROT.GetObject binds to an existing object only; it never opens the
-        # file from disk.
-        try:
-            running_objects = pythoncom.GetRunningObjectTable()
-            bind_context = pythoncom.CreateBindCtx(0)
-            monikers = running_objects.EnumRunning()
+            try:
+                workbook = win32.GetObject(str(workbook_path))
+                excel_app = workbook.Application
+                previous_display_alerts = excel_app.DisplayAlerts
+                excel_app.DisplayAlerts = False
+                workbook.Close(SaveChanges=False)
 
-            while pending:
-                next_moniker = monikers.Next(1)
-                if not next_moniker:
-                    break
+                pending.remove(workbook_path)
+                closed_names.append(workbook_path.name)
 
-                moniker = next_moniker[0]
-                try:
-                    display_name = moniker.GetDisplayName(bind_context, None)
-                    if not str(display_name).lower().endswith(
-                        (".xlsx", ".xlsm", ".xls")
-                    ):
-                        continue
-                    workbook = win32.Dispatch(running_objects.GetObject(moniker))
-                    close_if_target(workbook)
-                except Exception:
-                    continue
-        except Exception as exc:
-            for workbook_path in pending:
+                if excel_app.Workbooks.Count == 0:
+                    excel_app.Quit()
+                else:
+                    # Preserve the user's existing Excel session and settings.
+                    excel_app.DisplayAlerts = previous_display_alerts
+            except Exception as exc:
                 last_errors[workbook_path] = exc
 
         if pending:
@@ -1274,12 +1113,12 @@ def close_sap_exported_workbooks(
 
     if pending:
         details = "; ".join(
-            f"{path.name}: {last_errors.get(path, 'not registered as open')}"
+            f"{path.name}: {last_errors.get(path, 'file not found')}"
             for path in sorted(pending, key=lambda item: item.name.lower())
         )
         print(
-            "⚠️ Could not close every SAP-opened Excel workbook without "
-            f"reopening it; ETL will continue: {details}"
+            "⚠️ Could not close every SAP-opened Excel workbook; "
+            f"ETL will continue: {details}"
         )
 
 
@@ -1356,7 +1195,6 @@ def export_sap_reports(
     sap_eta_file,
     zinv_file,
     zmachk_file,
-    google_client,
 ):
     """Export ME2M, ZINV_MCH, and ZMACHK reports from SAP."""
     global session
@@ -1386,7 +1224,7 @@ def export_sap_reports(
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
-
+    
     # ------- ZINV -------
     
     try_press("wnd[0]/tbar[0]/btn[15]")
@@ -1409,18 +1247,28 @@ def export_sap_reports(
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
-
-    # Close the two exact SAP workbooks after export so they do not remain
-    # open or lock files needed by the downstream ETL.
-    close_sap_exported_workbooks([sap_eta_file, zinv_file])
     
     
     
     # ------- ZMACHK -------
     
-    # Read the latest Article values through the authenticated Sheets API.
-    # UI filters do not remove the underlying rows returned by this method.
-    review_articles = load_review_articles_from_google_api(google_client)
+    # Google Sheets UI filters do not change CSV exports, so all underlying
+    # Dry and NonFood Article values are included for ZMACHK.
+    review_frames = []
+    for gid in GOOGLE_FORECAST_SOURCE_GIDS:
+        csv_url = (
+            f"https://docs.google.com/spreadsheets/d/{GOOGLE_SPREADSHEET_ID}"
+            f"/export?format=csv&gid={gid}"
+        )
+        review_frames.append(pd.read_csv(csv_url, header=1))
+    review_articles = (
+        pd.concat(
+            [frame[["Article"]] for frame in review_frames],
+            ignore_index=True,
+        )
+        .dropna()
+        .drop_duplicates()
+    )
     
     
     try_press("wnd[0]/tbar[0]/btn[15]")
@@ -1429,18 +1277,24 @@ def export_sap_reports(
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(0.5)
     
-    article_upload_file = Path(save_dir) / f"ZMACHK_Articles_{date_file}.txt"
-    upload_articles_to_sap(review_articles, article_upload_file)
+    review_articles.to_clipboard(index=False, header=False)
+    
+    session.findById("wnd[0]").maximize
+    try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
+    try_press("wnd[1]/tbar[0]/btn[24]")
+    try_press("wnd[1]/tbar[0]/btn[8]")
     try_press("wnd[0]/tbar[1]/btn[8]")
     optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
     try_set_text("wnd[1]/usr/ctxtDY_PATH", save_dir)
+    review_articles.to_clipboard(index=False, header=False)
     try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAP_EXPORT_NAMES[2]+date_file+".xlsx"))
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 17
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
     
-    # Close the final SAP-exported workbook before pandas reads it.
-    close_sap_exported_workbooks([zmachk_file])
+    # SAP automatically opens the three exported files in Excel. Close only these
+    # exact workbooks before pandas reads them; leave any unrelated workbooks open.
+    close_sap_exported_workbooks([sap_eta_file, zinv_file, zmachk_file])
 
 
 def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
@@ -1454,11 +1308,14 @@ def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
         oocl_df['Out-Gate(Actual)'] + pd.Timedelta(days=5)
     )
     
-    oocl_df['SAP PO#'] = (
-        pd.to_numeric(oocl_df['SAP PO#'], errors='coerce')
-        .astype('Int64')
-        .astype('string')
+    mask = oocl_df['SAP PO#'].notna()
+    
+    oocl_df.loc[mask, 'SAP PO#'] = (
+        oocl_df.loc[mask, 'SAP PO#']
+            .astype('Int64')
+            .astype(str)
     )
+    oocl_df['SAP PO#'] = oocl_df['SAP PO#'].replace('<NA>', pd.NA)
     
     oocl_clean = oocl_df[['SAP PO#', 'DC ETA']].drop_duplicates('SAP PO#')
     
@@ -1656,16 +1513,12 @@ def main():
     # Keep the previous validated OOCL file when today's download fails.
     download_latest_oocl_eta()
 
-    # Authenticate once and reuse the same client for source reads and uploads.
-    google_client = _get_google_sheets_client()
-
     export_sap_reports(
         str(daily_dir),
         run_date,
         sap_eta_file,
         zinv_file,
         zmachk_file,
-        google_client,
     )
     inventory_df = build_inventory_output(
         sap_eta_file,
@@ -1674,6 +1527,7 @@ def main():
     )
     save_inventory_output(inventory_df, output_file)
 
+    google_client = _get_google_sheets_client()
     upload_inventory_to_google_sheet(google_client, inventory_df)
     upload_dry_nonfood_forecast_movement(google_client)
 

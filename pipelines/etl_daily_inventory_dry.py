@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pythoncom
 import win32com.client as win32
 from datetime import date
 from ETL_SAP.sap_scripts.sap_utils import *
@@ -994,40 +995,131 @@ def optional_select(id_path):
     except Exception:
         pass
 
-def close_sap_exported_workbooks(workbook_paths, wait_seconds=30):
-    """Close only the workbooks exported by this SAP run.
 
-    SAP may automatically open each exported workbook in Excel. Bind to each
-    exact workbook path, close it without saving, and quit Excel only when that
-    Excel instance has no other workbooks open. A close failure is non-fatal so
-    the remaining ETL can continue.
+def write_articles_to_sap_upload_file(article_frame, file_path):
+    """Write one Article per line for SAP Multiple Selection file upload."""
+    values = [
+        _identifier_text(value)
+        for value in article_frame.iloc[:, 0]
+        if not pd.isna(value)
+    ]
+    values = [value for value in values if value]
+    if not values:
+        raise ValueError("No Article values were available for the SAP file upload.")
+
+    file_path = Path(file_path).resolve()
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with file_path.open("w", encoding="utf-8", newline="\r\n") as handle:
+        handle.write("\n".join(values) + "\n")
+    print(
+        f"✅ SAP Article upload file created: {file_path} "
+        f"({len(values):,} Articles)"
+    )
+    return file_path
+
+
+def upload_articles_to_sap(article_frame, file_path):
+    """Load Article values into SAP without using the Windows clipboard."""
+    file_path = write_articles_to_sap_upload_file(article_frame, file_path)
+
+    session.findById("wnd[0]").maximize
+    try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
+    try_press("wnd[1]/tbar[0]/btn[23]")  # Upload from file
+    try_set_text("wnd[2]/usr/ctxtDY_PATH", str(file_path.parent))
+    try_set_text("wnd[2]/usr/ctxtDY_FILENAME", file_path.name)
+    try_press("wnd[2]/tbar[0]/btn[0]")
+    try_press("wnd[1]/tbar[0]/btn[8]")
+    print(f"✅ Article list uploaded to SAP from file: {file_path.name}")
+
+def close_sap_exported_workbooks(
+    workbook_paths,
+    wait_seconds=30,
+    settle_seconds=2,
+):
+    """Close SAP-opened workbooks without opening them a second time.
+
+    The old ``GetObject(file_path)`` approach could race with SAP while Excel
+    was still opening the export and trigger a second Excel instance plus a
+    "File in Use" dialog. This version only inspects objects that are already
+    registered as running and closes an exact full-path match.
     """
     pending = {Path(path).resolve() for path in workbook_paths}
     closed_names = []
     last_errors = {}
     deadline = time.time() + wait_seconds
 
+    print(
+        "⏳ Waiting for SAP-exported Excel workbook(s) to open: "
+        + ", ".join(sorted(path.name for path in pending))
+    )
+    time.sleep(settle_seconds)
+
+    def close_if_target(workbook):
+        try:
+            full_name = Path(str(workbook.FullName)).resolve()
+        except Exception:
+            return
+
+        if full_name not in pending:
+            return
+
+        try:
+            excel_app = workbook.Application
+            previous_display_alerts = excel_app.DisplayAlerts
+            excel_app.DisplayAlerts = False
+            workbook.Close(SaveChanges=False)
+
+            pending.remove(full_name)
+            closed_names.append(full_name.name)
+
+            if excel_app.Workbooks.Count == 0:
+                excel_app.Quit()
+            else:
+                # Preserve the user's existing Excel session and settings.
+                excel_app.DisplayAlerts = previous_display_alerts
+        except Exception as exc:
+            last_errors[full_name] = exc
+
     while pending and time.time() < deadline:
-        for workbook_path in list(pending):
-            if not workbook_path.exists():
-                continue
+        # SAP and Excel share the COM apartment already initialized by the
+        # running automation. Do not call CoUninitialize here, because that
+        # disconnects the existing SAP session object.
+        # First inspect the Excel application currently registered as active.
+        # Merely attaching to the application cannot reopen a workbook.
+        try:
+            excel_app = win32.GetActiveObject("Excel.Application")
+            for index in range(int(excel_app.Workbooks.Count), 0, -1):
+                close_if_target(excel_app.Workbooks.Item(index))
+        except Exception:
+            pass
 
-            try:
-                workbook = win32.GetObject(str(workbook_path))
-                excel_app = workbook.Application
-                previous_display_alerts = excel_app.DisplayAlerts
-                excel_app.DisplayAlerts = False
-                workbook.Close(SaveChanges=False)
+        # Multiple Excel instances can exist. Excel registers open workbooks
+        # in the Running Object Table, so inspect those existing objects too.
+        # ROT.GetObject binds to an existing object only; it never opens the
+        # file from disk.
+        try:
+            running_objects = pythoncom.GetRunningObjectTable()
+            bind_context = pythoncom.CreateBindCtx(0)
+            monikers = running_objects.EnumRunning()
 
-                pending.remove(workbook_path)
-                closed_names.append(workbook_path.name)
+            while pending:
+                next_moniker = monikers.Next(1)
+                if not next_moniker:
+                    break
 
-                if excel_app.Workbooks.Count == 0:
-                    excel_app.Quit()
-                else:
-                    # Preserve the user's existing Excel session and settings.
-                    excel_app.DisplayAlerts = previous_display_alerts
-            except Exception as exc:
+                moniker = next_moniker[0]
+                try:
+                    display_name = moniker.GetDisplayName(bind_context, None)
+                    if not str(display_name).lower().endswith(
+                        (".xlsx", ".xlsm", ".xls")
+                    ):
+                        continue
+                    workbook = win32.Dispatch(running_objects.GetObject(moniker))
+                    close_if_target(workbook)
+                except Exception:
+                    continue
+        except Exception as exc:
+            for workbook_path in pending:
                 last_errors[workbook_path] = exc
 
         if pending:
@@ -1041,12 +1133,12 @@ def close_sap_exported_workbooks(workbook_paths, wait_seconds=30):
 
     if pending:
         details = "; ".join(
-            f"{path.name}: {last_errors.get(path, 'file not found')}"
+            f"{path.name}: {last_errors.get(path, 'not registered as open')}"
             for path in sorted(pending, key=lambda item: item.name.lower())
         )
         print(
-            "⚠️ Could not close every SAP-opened Excel workbook; "
-            f"ETL will continue: {details}"
+            "⚠️ Could not close every SAP-opened Excel workbook without "
+            f"reopening it; ETL will continue: {details}"
         )
 
 def export_sap_reports(
@@ -1084,7 +1176,7 @@ def export_sap_reports(
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
-    
+
     # ------- ZINV -------
     
     try_press("wnd[0]/tbar[0]/btn[15]")
@@ -1107,6 +1199,10 @@ def export_sap_reports(
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
+
+    # Close the two exact SAP workbooks after export so they do not remain
+    # open or lock files needed by the downstream ETL.
+    close_sap_exported_workbooks([sap_eta_file, zinv_file])
     
     
     
@@ -1128,24 +1224,18 @@ def export_sap_reports(
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(0.5)
     
-    review_articles.to_clipboard(index=False, header=False)
-    
-    session.findById("wnd[0]").maximize
-    try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
-    try_press("wnd[1]/tbar[0]/btn[24]")
-    try_press("wnd[1]/tbar[0]/btn[8]")
+    article_upload_file = Path(save_dir) / f"ZMACHK_Articles_{date_file}.txt"
+    upload_articles_to_sap(review_articles, article_upload_file)
     try_press("wnd[0]/tbar[1]/btn[8]")
     optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
     try_set_text("wnd[1]/usr/ctxtDY_PATH", save_dir)
-    review_articles.to_clipboard(index=False, header=False)
     try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAP_EXPORT_NAMES[2]+date_file+".xlsx"))
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 17
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
     
-    # SAP automatically opens the three exported files in Excel. Close only these
-    # exact workbooks before pandas reads them; leave any unrelated workbooks open.
-    close_sap_exported_workbooks([sap_eta_file, zinv_file, zmachk_file])
+    # Close the final SAP-exported workbook before pandas reads it.
+    close_sap_exported_workbooks([zmachk_file])
 
 
 def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
@@ -1159,14 +1249,11 @@ def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
         oocl_df['Out-Gate(Actual)'] + pd.Timedelta(days=5)
     )
     
-    mask = oocl_df['SAP PO#'].notna()
-    
-    oocl_df.loc[mask, 'SAP PO#'] = (
-        oocl_df.loc[mask, 'SAP PO#']
-            .astype('Int64')
-            .astype(str)
+    oocl_df['SAP PO#'] = (
+        pd.to_numeric(oocl_df['SAP PO#'], errors='coerce')
+        .astype('Int64')
+        .astype('string')
     )
-    oocl_df['SAP PO#'] = oocl_df['SAP PO#'].replace('<NA>', pd.NA)
     
     oocl_clean = oocl_df[['SAP PO#', 'DC ETA']].drop_duplicates('SAP PO#')
     

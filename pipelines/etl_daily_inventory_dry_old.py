@@ -8,15 +8,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pythoncom
 import win32com.client as win32
 from datetime import date
 from ETL_SAP.sap_scripts.sap_utils import *
 from ETL_SAP.sap_scripts.login import sap_login
 
 import urllib.request
-import urllib.parse
-from sqlalchemy import create_engine, text
 
 from dotenv import load_dotenv
 
@@ -54,25 +51,25 @@ OOCL_DOWNLOAD_WAIT_SECONDS = int(
     os.getenv("OOCL_DOWNLOAD_WAIT_SECONDS", "60")
 )
 
-# Google Sheets source/destination for the Local Dry + Non Food update.
-GOOGLE_SPREADSHEET_ID = "1VjHnVoA7WoaoA_BDpAaFvG8MS-LT3yT97fHtseSCYuA"
+# Google Sheets destination for the Dry Grocery daily inventory output.
+GOOGLE_SPREADSHEET_ID = "1P6mdd94PpgomDWrx5MQ-q-88Ps2o9sGdxTWS3v_RJLQ"
 GOOGLE_ZMMIDR_TAB = "Zmmidr"
 GOOGLE_ZMMIDR_STAGING_TAB = "_Zmmidr_ETL_Staging"
 
-# Copy the Dry and NonFood forecasts into one movement-report tab.
-GOOGLE_FORECAST_SOURCE_TABS = ("Dry", "NonFood")
+# Copy selected Dry Grocery forecast fields into the separate movement report.
+GOOGLE_FORECAST_SOURCE_TAB = "Report"
 GOOGLE_MOVEMENT_SPREADSHEET_ID = "1KXSELCbmaPHpXltvqtAQ9lD9uPJUeNMN4hu0eYc5x_U"
-GOOGLE_MOVEMENT_TAB = "Annie"
-GOOGLE_MOVEMENT_STAGING_TAB = "_Annie_ETL_Staging"
-NONFOOD_QTY_SWITCH_CELL = "AF1"
+GOOGLE_MOVEMENT_TAB = "Dry"
+GOOGLE_MOVEMENT_STAGING_TAB = "_Dry_ETL_Staging"
 
-# Common source → destination mapping. Qty Oun is handled separately because
-# NonFood switches between OUn and BUn according to NonFood!AF1.
+# Source → destination mapping for the Dry movement report. Add or change a
+# mapping here instead of editing the transformation code below.
 MOVEMENT_COLUMN_MAP = [
     ("Site", "Site"),
     ("Article", "Article No"),
     ("Tawa Final Fcst", "Regular Forcast For Reference"),
     ("Tawa Final Fcst (Include Promo)", "Final Tawa Fsct Mvt (Inlcude Promo)"),
+    ("OUn", "Qty Oun"),
     ("Walong Final Fcst", "Walong Bacic Fcst"),
     ("Walong Final Fcst (Include Promo)", "Walong Final Fcst （Include promo)"),
     ("Lead Time (Wk)", "Lead Time (Week)"),
@@ -116,16 +113,17 @@ GOOGLE_AUTHORIZED_USER_FILE = Path(
 )
 
 # -----------------------------------------------------------------------
-# Local Dry + Non Food SAP / output settings
+# Dry Grocery SAP / output settings
 # -----------------------------------------------------------------------
 
 DEPT = "Dry Grocery"
 SAP_T_CODES = ["ME2M", "ZINV_MCH", "ZMACHK"]
 SAP_SITES = ["9790", "9900"]
 SAP_SELECTION_VARIANT = "WE101"
-SAP_MCH_RANGE = ["10500000", "10699999"]
+SAP_MCH_RANGE = ["10600000", "10699999"]
 SAP_DATE_FROM = "10/01/2022"
 SAP_EXPORT_NAMES = ["SAP_ETA_", "ZINV_MCH_", "ZMACHK_"]
+GOOGLE_FORECAST_SOURCE_GID = "1673826654"
 
 
 def _wait_for_download(download_dir, timeout_seconds):
@@ -550,76 +548,6 @@ def _get_google_sheets_client():
     )
 
 
-def load_review_articles_from_google_api(
-    client,
-    retries=5,
-    pause_seconds=5,
-):
-    """Read the latest Dry and NonFood Article lists via authenticated API.
-
-    Header row 2 is inspected by name, so inserting or moving columns does not
-    break the Article lookup. Google Sheets UI filters do not remove underlying
-    values returned by the API.
-    """
-    last_error = None
-
-    for attempt in range(1, retries + 1):
-        try:
-            spreadsheet = client.open_by_key(GOOGLE_SPREADSHEET_ID)
-            article_values = []
-            tab_counts = []
-
-            for tab_name in GOOGLE_FORECAST_SOURCE_TABS:
-                worksheet = spreadsheet.worksheet(tab_name)
-                headers = [
-                    str(value).strip()
-                    for value in worksheet.row_values(2)
-                ]
-                if "Article" not in headers:
-                    raise KeyError(
-                        f"{tab_name}!2:2 does not contain an Article header."
-                    )
-
-                article_column = headers.index("Article") + 1
-                tab_articles = [
-                    str(value).strip()
-                    for value in worksheet.col_values(article_column)[2:]
-                    if str(value).strip()
-                ]
-                article_values.extend(tab_articles)
-                tab_counts.append(f"{tab_name}={len(tab_articles):,}")
-
-            review_articles = (
-                pd.DataFrame({"Article": article_values})
-                .dropna()
-                .drop_duplicates()
-            )
-            if review_articles.empty:
-                raise ValueError(
-                    "Dry and NonFood returned no Article values."
-                )
-
-            print(
-                "✅ Article list read through Google Sheets API: "
-                + ", ".join(tab_counts)
-                + f"; unique={len(review_articles):,}"
-            )
-            return review_articles
-
-        except Exception as exc:
-            last_error = exc
-            if attempt < retries:
-                print(
-                    "⚠️ Google Sheets Article read failed; retrying "
-                    f"({attempt}/{retries}): {exc}"
-                )
-                time.sleep(pause_seconds)
-
-    raise RuntimeError(
-        f"Google Sheets Article read failed after {retries} attempts."
-    ) from last_error
-
-
 def _google_sheet_cell_value(value):
     """Convert pandas/numpy values into Google Sheets JSON-safe values."""
     if pd.isna(value):
@@ -870,7 +798,6 @@ def upload_inventory_to_google_sheet(client, inventory_df):
         "ETA",
         "Walong Status",
         "Tawa Status",
-        "storeinv",
     ]
     if list(inventory_df.columns) != expected_columns:
         raise ValueError(
@@ -932,41 +859,44 @@ def _round_to_whole_number(value):
         return value
 
 
-def _build_forecast_rows(
-    worksheet,
-    *,
-    department,
-    qty_source_header,
-    excluded_seasonal_values,
-    excluded_sites,
-    output_headers,
-):
-    """Transform one source tab using headers instead of column letters."""
-    source_headers = list(
-        dict.fromkeys(
-            [source for source, _ in MOVEMENT_COLUMN_MAP]
-            + [qty_source_header, "SCA Assort", "Seasonal"]
+def upload_dry_forecast_movement(client):
+    """Copy the filtered Dry forecast into the movement report."""
+    source_book = client.open_by_key(GOOGLE_SPREADSHEET_ID)
+    source = source_book.worksheet(GOOGLE_FORECAST_SOURCE_TAB)
+    target_book = client.open_by_key(GOOGLE_MOVEMENT_SPREADSHEET_ID)
+    target = target_book.worksheet(GOOGLE_MOVEMENT_TAB)
+
+    existing_headers = target.get("A1:N1")
+    if (
+        not existing_headers
+        or existing_headers[0] != MOVEMENT_FIXED_HEADERS
+    ):
+        raise ValueError(
+            "Movement upload stopped because Dry!A1:N1 changed. "
+            f"Expected {MOVEMENT_FIXED_HEADERS}; received "
+            f"{existing_headers[0] if existing_headers else []}"
         )
+
+    source_headers = [
+        source_header
+        for source_header, _ in MOVEMENT_COLUMN_MAP
+    ] + ["SCA Assort", "Seasonal"]
+    columns = _read_columns_by_header(source, source_headers)
+
+    run_date = date.today()
+    update_header = (
+        f"Updated {run_date.month}.{run_date.day}.{run_date.year}"
     )
-    columns = _read_columns_by_header(worksheet, source_headers)
+    output_headers = MOVEMENT_FIXED_HEADERS + [update_header]
+
+    output_rows = []
+    excluded_special = 0
+    excluded_seasonal = 0
+    skipped_missing_id = 0
     source_row_count = max(
         (len(column) for column in columns.values()),
         default=0,
     )
-
-    output_rows = []
-    stats = {
-        "special": 0,
-        "seasonal": 0,
-        "site": 0,
-        "missing_id": 0,
-    }
-    excluded_seasonal = {
-        str(value).strip().upper() for value in excluded_seasonal_values
-    }
-    excluded_site_values = {
-        _identifier_text(value) for value in excluded_sites
-    }
 
     for row_index in range(source_row_count):
         source_row = {
@@ -975,30 +905,25 @@ def _build_forecast_rows(
         }
 
         if str(source_row["SCA Assort"]).strip().upper() == "SPECIAL":
-            stats["special"] += 1
+            excluded_special += 1
             continue
-        if str(source_row["Seasonal"]).strip().upper() in excluded_seasonal:
-            stats["seasonal"] += 1
+        if str(source_row["Seasonal"]).strip().upper() in {"CNY", "GBF"}:
+            excluded_seasonal += 1
             continue
 
         site_text = _identifier_text(source_row["Site"])
         article_text = _identifier_text(source_row["Article"])
         if not site_text or not article_text:
-            stats["missing_id"] += 1
-            continue
-        if site_text in excluded_site_values:
-            stats["site"] += 1
+            skipped_missing_id += 1
             continue
 
         destination_row = {
-            destination: source_row[source]
-            for source, destination in MOVEMENT_COLUMN_MAP
+            destination_header: source_row[source_header]
+            for source_header, destination_header in MOVEMENT_COLUMN_MAP
         }
-        destination_row["Qty Oun"] = source_row[qty_source_header]
         for header in (
             "Walong Bacic Fcst",
             "Walong Final Fcst （Include promo)",
-            "Final Order Qty",
         ):
             destination_row[header] = _round_to_whole_number(
                 destination_row[header]
@@ -1006,73 +931,15 @@ def _build_forecast_rows(
         destination_row.update(
             {
                 "On Order": "",
-                "Dept": department,
+                "Dept": "Dry Grocery",
                 "Article NoDC": site_text + article_text,
+                update_header: "",
             }
         )
         output_rows.append(
             [destination_row.get(header, "") for header in output_headers]
         )
 
-    return output_rows, stats
-
-
-def upload_dry_nonfood_forecast_movement(client):
-    """Combine filtered Dry and NonFood forecasts, then replace D&F."""
-    source_book = client.open_by_key(GOOGLE_SPREADSHEET_ID)
-    dry_source = source_book.worksheet(GOOGLE_FORECAST_SOURCE_TABS[0])
-    nonfood_source = source_book.worksheet(GOOGLE_FORECAST_SOURCE_TABS[1])
-
-    target_book = client.open_by_key(GOOGLE_MOVEMENT_SPREADSHEET_ID)
-    target = target_book.worksheet(GOOGLE_MOVEMENT_TAB)
-    existing_headers = target.get("A1:N1")
-    if not existing_headers or existing_headers[0] != MOVEMENT_FIXED_HEADERS:
-        raise ValueError(
-            f"Movement upload stopped because {GOOGLE_MOVEMENT_TAB}!A1:N1 changed. "
-            f"Expected {MOVEMENT_FIXED_HEADERS}; received "
-            f"{existing_headers[0] if existing_headers else []}"
-        )
-
-    switch_value = str(
-        nonfood_source.acell(NONFOOD_QTY_SWITCH_CELL).value or ""
-    ).strip().casefold()
-    if switch_value == "x":
-        nonfood_qty_header = "OUn"
-    elif switch_value == "":
-        nonfood_qty_header = "BUn"
-    else:
-        raise ValueError(
-            f"NonFood!{NONFOOD_QTY_SWITCH_CELL} must be X/x or blank; "
-            f"received {switch_value!r}."
-        )
-    print(
-        f"✅ NonFood Qty Oun source: {nonfood_qty_header} "
-        f"({NONFOOD_QTY_SWITCH_CELL}={switch_value or 'blank'})"
-    )
-
-    run_date = date.today()
-    update_header = f"Updated {run_date.month}.{run_date.day}.{run_date.year}"
-    output_headers = MOVEMENT_FIXED_HEADERS + [update_header]
-
-    dry_rows, dry_stats = _build_forecast_rows(
-        dry_source,
-        department="Dry Grocery",
-        qty_source_header="OUn",
-        excluded_seasonal_values={"CNY", "GBF"},
-        excluded_sites=set(),
-        output_headers=output_headers,
-    )
-    nonfood_rows, nonfood_stats = _build_forecast_rows(
-        nonfood_source,
-        department="Non Food",
-        qty_source_header=nonfood_qty_header,
-        excluded_seasonal_values={"CNY", "GBF", "HOLIDAY-SPECIFIC"},
-        excluded_sites={"9790"},
-        output_headers=output_headers,
-    )
-
-    # Dry is deliberately first; NonFood is appended below it.
-    output_rows = dry_rows + nonfood_rows
     _replace_sheet_values_via_staging(
         target_book,
         target,
@@ -1081,21 +948,12 @@ def upload_dry_nonfood_forecast_movement(client):
         output_rows,
         progress_label=GOOGLE_MOVEMENT_TAB,
     )
-
-    for label, rows, stats in (
-        ("Dry", dry_rows, dry_stats),
-        ("NonFood", nonfood_rows, nonfood_stats),
-    ):
-        print(
-            f"✅ {label} forecast prepared: {len(rows):,} rows; "
-            f"excluded SPECIAL={stats['special']:,}, "
-            f"seasonal={stats['seasonal']:,}, "
-            f"excluded sites={stats['site']:,}, "
-            f"missing IDs={stats['missing_id']:,}"
-        )
     print(
         f"✅ Movement report updated: {GOOGLE_MOVEMENT_TAB} "
-        f"({len(output_rows):,} combined rows)"
+        f"({len(output_rows):,} rows; "
+        f"excluded SPECIAL={excluded_special:,}, "
+        f"CNY/GBF={excluded_seasonal:,}, "
+        f"missing IDs={skipped_missing_id:,})"
     )
 
 
@@ -1136,131 +994,40 @@ def optional_select(id_path):
     except Exception:
         pass
 
+def close_sap_exported_workbooks(workbook_paths, wait_seconds=30):
+    """Close only the workbooks exported by this SAP run.
 
-def write_articles_to_sap_upload_file(article_frame, file_path):
-    """Write one Article per line for SAP Multiple Selection file upload."""
-    values = [
-        _identifier_text(value)
-        for value in article_frame.iloc[:, 0]
-        if not pd.isna(value)
-    ]
-    values = [value for value in values if value]
-    if not values:
-        raise ValueError("No Article values were available for the SAP file upload.")
-
-    file_path = Path(file_path).resolve()
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    with file_path.open("w", encoding="utf-8", newline="\r\n") as handle:
-        handle.write("\n".join(values) + "\n")
-    print(
-        f"✅ SAP Article upload file created: {file_path} "
-        f"({len(values):,} Articles)"
-    )
-    return file_path
-
-
-def upload_articles_to_sap(article_frame, file_path):
-    """Load Article values into SAP without using the Windows clipboard."""
-    file_path = write_articles_to_sap_upload_file(article_frame, file_path)
-
-    session.findById("wnd[0]").maximize
-    try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
-    try_press("wnd[1]/tbar[0]/btn[23]")  # Upload from file
-    try_set_text("wnd[2]/usr/ctxtDY_PATH", str(file_path.parent))
-    try_set_text("wnd[2]/usr/ctxtDY_FILENAME", file_path.name)
-    try_press("wnd[2]/tbar[0]/btn[0]")
-    try_press("wnd[1]/tbar[0]/btn[8]")
-    print(f"✅ Article list uploaded to SAP from file: {file_path.name}")
-
-def close_sap_exported_workbooks(
-    workbook_paths,
-    wait_seconds=30,
-    settle_seconds=2,
-):
-    """Close SAP-opened workbooks without opening them a second time.
-
-    The old ``GetObject(file_path)`` approach could race with SAP while Excel
-    was still opening the export and trigger a second Excel instance plus a
-    "File in Use" dialog. This version only inspects objects that are already
-    registered as running and closes an exact full-path match.
+    SAP may automatically open each exported workbook in Excel. Bind to each
+    exact workbook path, close it without saving, and quit Excel only when that
+    Excel instance has no other workbooks open. A close failure is non-fatal so
+    the remaining ETL can continue.
     """
     pending = {Path(path).resolve() for path in workbook_paths}
     closed_names = []
     last_errors = {}
     deadline = time.time() + wait_seconds
 
-    print(
-        "⏳ Waiting for SAP-exported Excel workbook(s) to open: "
-        + ", ".join(sorted(path.name for path in pending))
-    )
-    time.sleep(settle_seconds)
-
-    def close_if_target(workbook):
-        try:
-            full_name = Path(str(workbook.FullName)).resolve()
-        except Exception:
-            return
-
-        if full_name not in pending:
-            return
-
-        try:
-            excel_app = workbook.Application
-            previous_display_alerts = excel_app.DisplayAlerts
-            excel_app.DisplayAlerts = False
-            workbook.Close(SaveChanges=False)
-
-            pending.remove(full_name)
-            closed_names.append(full_name.name)
-
-            if excel_app.Workbooks.Count == 0:
-                excel_app.Quit()
-            else:
-                # Preserve the user's existing Excel session and settings.
-                excel_app.DisplayAlerts = previous_display_alerts
-        except Exception as exc:
-            last_errors[full_name] = exc
-
     while pending and time.time() < deadline:
-        # SAP and Excel share the COM apartment already initialized by the
-        # running automation. Do not call CoUninitialize here, because that
-        # disconnects the existing SAP session object.
-        # First inspect the Excel application currently registered as active.
-        # Merely attaching to the application cannot reopen a workbook.
-        try:
-            excel_app = win32.GetActiveObject("Excel.Application")
-            for index in range(int(excel_app.Workbooks.Count), 0, -1):
-                close_if_target(excel_app.Workbooks.Item(index))
-        except Exception:
-            pass
+        for workbook_path in list(pending):
+            if not workbook_path.exists():
+                continue
 
-        # Multiple Excel instances can exist. Excel registers open workbooks
-        # in the Running Object Table, so inspect those existing objects too.
-        # ROT.GetObject binds to an existing object only; it never opens the
-        # file from disk.
-        try:
-            running_objects = pythoncom.GetRunningObjectTable()
-            bind_context = pythoncom.CreateBindCtx(0)
-            monikers = running_objects.EnumRunning()
+            try:
+                workbook = win32.GetObject(str(workbook_path))
+                excel_app = workbook.Application
+                previous_display_alerts = excel_app.DisplayAlerts
+                excel_app.DisplayAlerts = False
+                workbook.Close(SaveChanges=False)
 
-            while pending:
-                next_moniker = monikers.Next(1)
-                if not next_moniker:
-                    break
+                pending.remove(workbook_path)
+                closed_names.append(workbook_path.name)
 
-                moniker = next_moniker[0]
-                try:
-                    display_name = moniker.GetDisplayName(bind_context, None)
-                    if not str(display_name).lower().endswith(
-                        (".xlsx", ".xlsm", ".xls")
-                    ):
-                        continue
-                    workbook = win32.Dispatch(running_objects.GetObject(moniker))
-                    close_if_target(workbook)
-                except Exception:
-                    continue
-        except Exception as exc:
-            for workbook_path in pending:
+                if excel_app.Workbooks.Count == 0:
+                    excel_app.Quit()
+                else:
+                    # Preserve the user's existing Excel session and settings.
+                    excel_app.DisplayAlerts = previous_display_alerts
+            except Exception as exc:
                 last_errors[workbook_path] = exc
 
         if pending:
@@ -1274,81 +1041,13 @@ def close_sap_exported_workbooks(
 
     if pending:
         details = "; ".join(
-            f"{path.name}: {last_errors.get(path, 'not registered as open')}"
+            f"{path.name}: {last_errors.get(path, 'file not found')}"
             for path in sorted(pending, key=lambda item: item.name.lower())
         )
         print(
-            "⚠️ Could not close every SAP-opened Excel workbook without "
-            f"reopening it; ETL will continue: {details}"
+            "⚠️ Could not close every SAP-opened Excel workbook; "
+            f"ETL will continue: {details}"
         )
-
-
-def get_sql_engine():
-    """Create the trusted SQL Server connection used for store inventory."""
-    params = urllib.parse.quote_plus(
-        "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=TawaDW;"
-        "DATABASE=TawaDWDB;"
-        "Trusted_Connection=yes;"
-        "Connection Timeout=10;"
-        "Query Timeout=0;"
-    )
-    return create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
-
-
-def load_store_inventory():
-    """Load the latest store inventory summarized to forecast DC sites."""
-    query = """
-        SELECT
-            i.article_number AS Article,
-            CASE
-                WHEN s.region IN ('Socal-1', 'Socal-2', 'Texas') THEN '9891'
-                WHEN s.region IN ('Nocal-1', 'Nocal-2') THEN '9900'
-                WHEN s.region = 'East' THEN '9790'
-            END AS Site,
-            SUM(
-                CASE
-                    WHEN a.MCH BETWEEN 10600000 AND 10699999
-                        THEN i.total_stock / NULLIF(a.order_uom_conv, 0)
-                    WHEN a.MCH BETWEEN 10500000 AND 10509999
-                        THEN i.total_stock
-                END
-            ) AS storeinv
-        FROM TawaDWDB.dbo.inv_zinventory AS i
-        LEFT JOIN dbo.md_site AS s
-            ON s.Site = i.Site
-        LEFT JOIN dbo.md_article_master AS a
-            ON a.article_number = i.article_number
-        WHERE i.inv_date = (
-            SELECT MAX(inv_date) FROM TawaDWDB.dbo.inv_zinventory
-        )
-          AND i.site BETWEEN 1000 AND 5999
-          AND s.region IN (
-              'Socal-1', 'Socal-2', 'Texas',
-              'Nocal-1', 'Nocal-2', 'East'
-          )
-          AND (
-              a.MCH BETWEEN 10600000 AND 10699999
-              OR a.MCH BETWEEN 10500000 AND 10509999
-          )
-          AND i.site IS NOT NULL
-        GROUP BY
-            i.article_number,
-            CASE
-                WHEN s.region IN ('Socal-1', 'Socal-2', 'Texas') THEN '9891'
-                WHEN s.region IN ('Nocal-1', 'Nocal-2') THEN '9900'
-                WHEN s.region = 'East' THEN '9790'
-            END
-        ORDER BY Site DESC, i.article_number
-    """
-    engine = get_sql_engine()
-    try:
-        with engine.connect() as connection:
-            server_time = connection.execute(text("SELECT GETDATE()"))
-            print("✅ 連線成功，現在時間是：", server_time.scalar())
-        return pd.read_sql(text(query), con=engine)
-    finally:
-        engine.dispose()
 
 def export_sap_reports(
     save_dir,
@@ -1356,7 +1055,6 @@ def export_sap_reports(
     sap_eta_file,
     zinv_file,
     zmachk_file,
-    google_client,
 ):
     """Export ME2M, ZINV_MCH, and ZMACHK reports from SAP."""
     global session
@@ -1386,7 +1084,7 @@ def export_sap_reports(
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
-
+    
     # ------- ZINV -------
     
     try_press("wnd[0]/tbar[0]/btn[15]")
@@ -1409,18 +1107,19 @@ def export_sap_reports(
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 7
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
-
-    # Close the two exact SAP workbooks after export so they do not remain
-    # open or lock files needed by the downstream ETL.
-    close_sap_exported_workbooks([sap_eta_file, zinv_file])
     
     
     
     # ------- ZMACHK -------
     
-    # Read the latest Article values through the authenticated Sheets API.
-    # UI filters do not remove the underlying rows returned by this method.
-    review_articles = load_review_articles_from_google_api(google_client)
+    # Dry Grocery Report tab. Google Sheets UI filters do not change this CSV
+    # export, so every underlying Article is included.
+    sheet_id = GOOGLE_SPREADSHEET_ID
+    gid = GOOGLE_FORECAST_SOURCE_GID
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+    review_dry = pd.read_csv(csv_url, header=1)
+    review_articles = review_dry[['Article']].dropna().drop_duplicates()
     
     
     try_press("wnd[0]/tbar[0]/btn[15]")
@@ -1429,18 +1128,24 @@ def export_sap_reports(
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(0.5)
     
-    article_upload_file = Path(save_dir) / f"ZMACHK_Articles_{date_file}.txt"
-    upload_articles_to_sap(review_articles, article_upload_file)
+    review_articles.to_clipboard(index=False, header=False)
+    
+    session.findById("wnd[0]").maximize
+    try_press("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
+    try_press("wnd[1]/tbar[0]/btn[24]")
+    try_press("wnd[1]/tbar[0]/btn[8]")
     try_press("wnd[0]/tbar[1]/btn[8]")
     optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
     try_set_text("wnd[1]/usr/ctxtDY_PATH", save_dir)
+    review_articles.to_clipboard(index=False, header=False)
     try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAP_EXPORT_NAMES[2]+date_file+".xlsx"))
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = 17
     # try_press("wnd[1]/tbar[0]/btn[0]")
     try_press("wnd[1]/tbar[0]/btn[11]")
     
-    # Close the final SAP-exported workbook before pandas reads it.
-    close_sap_exported_workbooks([zmachk_file])
+    # SAP automatically opens the three exported files in Excel. Close only these
+    # exact workbooks before pandas reads them; leave any unrelated workbooks open.
+    close_sap_exported_workbooks([sap_eta_file, zinv_file, zmachk_file])
 
 
 def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
@@ -1454,11 +1159,14 @@ def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
         oocl_df['Out-Gate(Actual)'] + pd.Timedelta(days=5)
     )
     
-    oocl_df['SAP PO#'] = (
-        pd.to_numeric(oocl_df['SAP PO#'], errors='coerce')
-        .astype('Int64')
-        .astype('string')
+    mask = oocl_df['SAP PO#'].notna()
+    
+    oocl_df.loc[mask, 'SAP PO#'] = (
+        oocl_df.loc[mask, 'SAP PO#']
+            .astype('Int64')
+            .astype(str)
     )
+    oocl_df['SAP PO#'] = oocl_df['SAP PO#'].replace('<NA>', pd.NA)
     
     oocl_clean = oocl_df[['SAP PO#', 'DC ETA']].drop_duplicates('SAP PO#')
     
@@ -1576,9 +1284,8 @@ def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
     zmachk_new['Tawa Status'] = np.select(conditions, choices_tawa, default = "")
     
     zmachk_new = zmachk_new[['Site', 'Article', 'Walong Status', 'Tawa Status']]
-    storeinv = load_store_inventory()
     
-    for df in [zmachk_new, zinv, ood, eta, storeinv]:
+    for df in [zmachk_new, zinv, ood, eta]:
         df['Site'] = df['Site'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         df['Article'] = df['Article'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     
@@ -1588,34 +1295,16 @@ def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
         .merge(zinv, on=['Site', 'Article'], how='left')
         .merge(ood, on=['Site', 'Article'], how='left')
         .merge(eta, on=['Site', 'Article'], how='left')
-        .merge(storeinv, on=['Site', 'Article'], how='left')
     )
 
-    stock_columns = [
-        'Unrestricted-Use Stock',
-        'Stock in Quality',
-        'On order Stock',
-        'storeinv',
-    ]
-    inv_final[stock_columns] = (
-        inv_final[stock_columns].fillna(0)
+    inv_final[['Unrestricted-Use Stock', 'Stock in Quality', 'On order Stock']] = (
+        inv_final[['Unrestricted-Use Stock', 'Stock in Quality', 'On order Stock']].fillna(0)
     )
     
     inv_final['ETA'] = pd.to_datetime(inv_final['ETA'], errors='coerce').dt.normalize()
     
     inv_final['Article NoDC'] = inv_final['Site'].astype(str) + inv_final['Article'].astype(str)
-    inv_final = inv_final[[
-        'Article NoDC',
-        'Article',
-        'Site',
-        'Unrestricted-Use Stock',
-        'On order Stock',
-        'Stock in Quality',
-        'ETA',
-        'Walong Status',
-        'Tawa Status',
-        'storeinv',
-    ]]
+    inv_final = inv_final[['Article NoDC', 'Article', 'Site', 'Unrestricted-Use Stock', 'On order Stock', 'Stock in Quality', 'ETA', 'Walong Status', 'Tawa Status']]
 
     return inv_final
 
@@ -1642,9 +1331,9 @@ def save_inventory_output(inventory_df, output_file):
 
 
 def main():
-    """Run the Local Dry + NonFood inventory and forecast automation."""
+    """Run the complete Dry Grocery daily inventory automation."""
     run_date = date.today().strftime("%m.%d.%Y")
-    daily_root = BASE_DIR / "SOH OOD" / "D&NF Daily Update"
+    daily_root = BASE_DIR / "SOH OOD" / "Daily Update"
     daily_dir = daily_root / run_date
     daily_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1656,16 +1345,12 @@ def main():
     # Keep the previous validated OOCL file when today's download fails.
     download_latest_oocl_eta()
 
-    # Authenticate once and reuse the same client for source reads and uploads.
-    google_client = _get_google_sheets_client()
-
     export_sap_reports(
         str(daily_dir),
         run_date,
         sap_eta_file,
         zinv_file,
         zmachk_file,
-        google_client,
     )
     inventory_df = build_inventory_output(
         sap_eta_file,
@@ -1674,8 +1359,9 @@ def main():
     )
     save_inventory_output(inventory_df, output_file)
 
+    google_client = _get_google_sheets_client()
     upload_inventory_to_google_sheet(google_client, inventory_df)
-    upload_dry_nonfood_forecast_movement(google_client)
+    upload_dry_forecast_movement(google_client)
 
 
 if __name__ == "__main__":
