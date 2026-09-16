@@ -58,7 +58,7 @@ GOOGLE_ZMMIDR_TAB = "Zmmidr"
 GOOGLE_ZMMIDR_STAGING_TAB = "_Zmmidr_ETL_Staging"
 
 # Copy selected Dry Grocery forecast fields into the separate movement report.
-GOOGLE_FORECAST_SOURCE_TAB = "Report"
+GOOGLE_FORECAST_SOURCE_TAB = "P8"
 GOOGLE_MOVEMENT_SPREADSHEET_ID = "1KXSELCbmaPHpXltvqtAQ9lD9uPJUeNMN4hu0eYc5x_U"
 GOOGLE_MOVEMENT_TAB = "Dry"
 GOOGLE_MOVEMENT_STAGING_TAB = "_Dry_ETL_Staging"
@@ -1239,6 +1239,7 @@ def export_sap_reports(
 
 
 def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
+
     """Combine OOCL ETA and the three SAP exports into the final dataset."""
     # ------- combine -------
     
@@ -1448,7 +1449,7 @@ def main():
 
     google_client = _get_google_sheets_client()
     upload_inventory_to_google_sheet(google_client, inventory_df)
-    upload_dry_forecast_movement(google_client)
+    # upload_dry_forecast_movement(google_client)
 
 
 if __name__ == "__main__":

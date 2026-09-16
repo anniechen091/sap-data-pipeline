@@ -37,13 +37,13 @@ call :log "Runtime information."
 >> "%LOG_FILE%" echo Python: %PYTHON_EXE%
 >> "%LOG_FILE%" set PYTHONPATH
 
-@REM call :log "Starting Dry Grocery."
-@REM "%PYTHON_EXE%" "%DRY_SCRIPT%" >> "%LOG_FILE%" 2>&1
-@REM set "DRY_EXIT=%ERRORLEVEL%"
-@REM call :log "Finished Dry Grocery with exit code %DRY_EXIT%."
+call :log "Starting Dry Grocery."
+"%PYTHON_EXE%" "%DRY_SCRIPT%" >> "%LOG_FILE%" 2>&1
+set "DRY_EXIT=%ERRORLEVEL%"
+call :log "Finished Dry Grocery with exit code %DRY_EXIT%."
 
-set "DRY_EXIT=0"
-call :log "Dry Grocery temporarily skipped."
+@REM set "DRY_EXIT=0"
+@REM call :log "Dry Grocery temporarily skipped."
 
 call :log "Starting Local Dry + Non Food."
 "%PYTHON_EXE%" "%LOCAL_SCRIPT%" >> "%LOG_FILE%" 2>&1

@@ -64,10 +64,8 @@ GOOGLE_FORECAST_SOURCE_TABS = ("Dry", "NonFood")
 GOOGLE_MOVEMENT_SPREADSHEET_ID = "1KXSELCbmaPHpXltvqtAQ9lD9uPJUeNMN4hu0eYc5x_U"
 GOOGLE_MOVEMENT_TAB = "Annie"
 GOOGLE_MOVEMENT_STAGING_TAB = "_Annie_ETL_Staging"
-NONFOOD_QTY_SWITCH_CELL = "AF1"
 
-# Common source → destination mapping. Qty Oun is handled separately because
-# NonFood switches between OUn and BUn according to NonFood!AF1.
+# Common source → destination mapping. Qty Oun is read from OUn for both tabs.
 MOVEMENT_COLUMN_MAP = [
     ("Site", "Site"),
     ("Article", "Article No"),
@@ -619,7 +617,7 @@ def load_review_articles_from_google_api(
         f"Google Sheets Article read failed after {retries} attempts."
     ) from last_error
 
-
+0.
 def _google_sheet_cell_value(value):
     """Convert pandas/numpy values into Google Sheets JSON-safe values."""
     if pd.isna(value):
@@ -1033,22 +1031,7 @@ def upload_dry_nonfood_forecast_movement(client):
             f"{existing_headers[0] if existing_headers else []}"
         )
 
-    switch_value = str(
-        nonfood_source.acell(NONFOOD_QTY_SWITCH_CELL).value or ""
-    ).strip().casefold()
-    if switch_value == "x":
-        nonfood_qty_header = "OUn"
-    elif switch_value == "":
-        nonfood_qty_header = "BUn"
-    else:
-        raise ValueError(
-            f"NonFood!{NONFOOD_QTY_SWITCH_CELL} must be X/x or blank; "
-            f"received {switch_value!r}."
-        )
-    print(
-        f"✅ NonFood Qty Oun source: {nonfood_qty_header} "
-        f"({NONFOOD_QTY_SWITCH_CELL}={switch_value or 'blank'})"
-    )
+    print("✅ Qty Oun source: OUn (Dry and NonFood)")
 
     run_date = date.today()
     update_header = f"Updated {run_date.month}.{run_date.day}.{run_date.year}"
@@ -1065,7 +1048,7 @@ def upload_dry_nonfood_forecast_movement(client):
     nonfood_rows, nonfood_stats = _build_forecast_rows(
         nonfood_source,
         department="Non Food",
-        qty_source_header=nonfood_qty_header,
+        qty_source_header="OUn",
         excluded_seasonal_values={"CNY", "GBF", "HOLIDAY-SPECIFIC"},
         excluded_sites={"9790"},
         output_headers=output_headers,
