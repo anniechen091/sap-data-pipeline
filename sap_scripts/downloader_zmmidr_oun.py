@@ -128,7 +128,7 @@ def download_zmmidr_OUn(EXPORT_DIR):
     session = sap_login()
 
     # === 設定參數 ===
-    DC_CODES = ["9801", "9891", "9900", "9901", "9790", "9793", "9905"]
+    DC_CODES = ["9891", "9900", "9790", "9793"]
     dept_name_to_code = {
 
     'Leisure Food': 101,
