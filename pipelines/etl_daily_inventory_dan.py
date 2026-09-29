@@ -1658,6 +1658,7 @@ def main():
     save_inventory_output(inventory_df, output_file)
 
     upload_inventory_to_google_sheet(google_client, inventory_df)
+    time.sleep(5)
     upload_dry_nonfood_forecast_movement(google_client)
 
 
