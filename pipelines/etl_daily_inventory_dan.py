@@ -1535,8 +1535,8 @@ def build_inventory_output(sap_eta_file, zinv_file, zmachk_file):
     
     zinv = pd.read_excel(zinv_file)
     
-    zinv = zinv[['Article No', 'Site', 'Available Inventory', 'Stock in Quality']].rename(columns = {'Article No':'Article',
-                                                                                                      'Available Inventory':'Unrestricted-Use Stock'})
+    zinv = zinv[['Article No', 'Site', 'Total Stock', 'Stock in Quality']].rename(columns = {'Article No':'Article',
+                                                                                                      'Total Stock':'Unrestricted-Use Stock'})
     
     zmachk = pd.read_excel(zmachk_file)
     
