@@ -78,7 +78,7 @@ def run_etl_zmachk(folder_path):
         "Retail Channel",
         "Status Online",
         "WholeSale Channel",
-        "Wacine Ordering",
+        "Replenishment",
     ]
     missing_cols = [c for c in legacy_source_cols if c not in batch_df.columns]
     if missing_cols:
@@ -122,7 +122,7 @@ def run_etl_zmachk(folder_path):
             "Retail Channel": "Retail_Channel",
             "Status Online": "Status_Online",
             "WholeSale Channel": "WholeSale_Channel",
-            "Wacine Ordering": "Wachine_Ordering",
+            "Replenishment": "Wachine_Ordering",
 
         }, inplace=True)
 

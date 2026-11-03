@@ -52,6 +52,7 @@ set "VPN_EXIT=%ERRORLEVEL%"
 >> "%LOG_FILE%" echo [%DATE% %TIME%] Finished VPN connection check with exit code %VPN_EXIT%.
 
 >> "%LOG_FILE%" echo [%DATE% %TIME%] Runtime information.
+
 >> "%LOG_FILE%" echo Working directory: %CD%
 >> "%LOG_FILE%" echo Python: %PYTHON_EXE%
 >> "%LOG_FILE%" set PYTHONPATH

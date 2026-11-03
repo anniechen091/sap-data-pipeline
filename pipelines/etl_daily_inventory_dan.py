@@ -349,6 +349,43 @@ def _download_excel_attachment(driver, wait, download_dir):
     )
 
 
+def apply_zinv_layout():
+    """Apply the required ZINV ALV layout by layout code or description."""
+    layout_name = "/ZINV_MCH"
+    layout_grid_id = (
+        "wnd[1]/usr/ssubD0500_SUBSCREEN:SAPLSLVC_DIALOG:0501/"
+        "cntlG51_CONTAINER/shellcont/shell"
+    )
+
+    try_press("wnd[0]/tbar[1]/btn[33]")
+    time.sleep(1)
+
+    grid = session.findById(layout_grid_id)
+    target_values = {"/ZINV_MCH", "ZINV_MCH"}
+
+    for row in range(grid.RowCount):
+        for column in ("VARIANT", "TEXT"):
+            try:
+                value = str(grid.GetCellValue(row, column)).strip()
+            except Exception:
+                continue
+
+            if value.upper() in target_values:
+                grid.SetCurrentCell(row, column)
+                grid.SelectedRows = str(row)
+                grid.ClickCurrentCell()
+                print("✅ SAP Layout applied: /ZINV_MCH")
+                return
+
+    try:
+        try_press("wnd[1]/tbar[0]/btn[12]")
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "SAP Layout /ZINV_MCH was not found; ZINV export stopped."
+    )
+
 def download_latest_oocl_eta():
     """
     Download the newest Excel attachment from the newest Gmail message whose
@@ -1386,6 +1423,11 @@ def export_sap_reports(
     optional_select("wnd[0]/usr/radPLBKUM1")
     optional_select("wnd[0]/usr/radP_OUNIT")
     try_press("wnd[0]/tbar[1]/btn[8]")
+    time.sleep(1)
+
+    apply_zinv_layout()
+    time.sleep(1)
+    
     optional_select("wnd[0]/mbar/menu[0]/menu[3]/menu[1]")
     try_set_text("wnd[1]/usr/ctxtDY_PATH", save_dir)
     try_set_text("wnd[1]/usr/ctxtDY_FILENAME", str(SAP_EXPORT_NAMES[1]+date_file+".xlsx"))
